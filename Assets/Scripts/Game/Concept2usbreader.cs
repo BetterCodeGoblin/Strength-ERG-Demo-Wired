@@ -19,9 +19,14 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.IO;
+using System.Net.Sockets;
 using System.Threading;
 using UnityEngine;
 using HidSharp;
+// Type aliases to avoid ambiguity with UnityEngine.Debug
+using SysProcess          = System.Diagnostics.Process;
+using SysProcessStartInfo = System.Diagnostics.ProcessStartInfo;
 
 public class Concept2UsbReader : MonoBehaviour
 {
@@ -34,6 +39,11 @@ public class Concept2UsbReader : MonoBehaviour
 
     [Header("Simulation")]
     public bool simulateInput = false;
+
+    [Header("Wireless BLE Mode")]
+    [Tooltip("Use Bluetooth LE instead of USB cable — no dongle required. " +
+             "Requires ERGBridgeBLE/ErgBridgeBLE.exe to be present next to the project.")]
+    public bool useBleWireless = false;
 
     // ─── Public Data ────────────────────────────────────────────
 
@@ -92,6 +102,13 @@ public class Concept2UsbReader : MonoBehaviour
     private volatile bool _running;
     private int _maxOut, _maxIn;
 
+    // BLE-mode fields (used when useBleWireless = true)
+    private SysProcess    _bleProcess;
+    private TcpClient     _bleTcp;
+    private NetworkStream _bleStream;
+    private Thread        _bleThread;
+    private Thread        _bridgeLogThread;  // forwards ErgBridgeBLE.exe stdout to Unity console
+
     private readonly object _dataLock = new object();
     private int _repCount, _pullDist, _hr;
     private float _repTime, _elapsed;
@@ -124,10 +141,22 @@ public class Concept2UsbReader : MonoBehaviour
             Debug.Log("[C2] Simulation mode.");
             return;
         }
+
         _running = true;
-        _pollThread = new Thread(ConnectionLoop);
-        _pollThread.IsBackground = true;
-        _pollThread.Start();
+
+        if (useBleWireless)
+        {
+            LaunchBleBridge();
+            _bleThread = new Thread(BleBridgeLoop);
+            _bleThread.IsBackground = true;
+            _bleThread.Start();
+        }
+        else
+        {
+            _pollThread = new Thread(ConnectionLoop);
+            _pollThread.IsBackground = true;
+            _pollThread.Start();
+        }
     }
 
     void Update()
@@ -171,6 +200,189 @@ public class Concept2UsbReader : MonoBehaviour
         _running = false;
         try { _pollThread?.Abort(); } catch { }
         try { _stream?.Close(); } catch { }
+        try { _bleThread?.Abort(); } catch { }
+        try { _bleStream?.Close(); } catch { }
+        try { _bleTcp?.Close(); } catch { }
+        try { _bridgeLogThread?.Abort(); } catch { }
+        try { if (_bleProcess != null && !_bleProcess.HasExited) _bleProcess.Kill(); } catch { }
+    }
+
+    // ─── BLE Bridge Launch ──────────────────────────────────────────────────
+
+    void LaunchBleBridge()
+    {
+        // Find ErgBridgeBLE.exe: sits in ERGBridgeBLE/ one level above Assets (or above _Data in a build)
+        string exePath = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "ERGBridgeBLE", "ErgBridgeBLE.exe"));
+
+        if (!File.Exists(exePath))
+        {
+            Debug.LogWarning($"[C2-BLE] ErgBridgeBLE.exe not found at: {exePath}\n" +
+                             "Run 'dotnet build -c Release' in the ERGBridgeBLE/ folder first.");
+            lock (_dataLock) { _status = "BLE exe not found — build ERGBridgeBLE first"; }
+            return;
+        }
+
+        var psi = new SysProcessStartInfo(exePath)
+        {
+            UseShellExecute        = false,
+            CreateNoWindow         = true,
+            RedirectStandardOutput = true,   // capture stdout → Unity console
+            RedirectStandardError  = true,
+        };
+
+        _bleProcess = SysProcess.Start(psi);
+        Debug.Log($"[C2-BLE] Launched ErgBridgeBLE.exe (PID {_bleProcess?.Id})");
+
+        // Forward bridge console output to Unity's log so we can see scan/connect progress
+        _bridgeLogThread = new Thread(() =>
+        {
+            try
+            {
+                string line;
+                while (_bleProcess != null && !_bleProcess.HasExited &&
+                       (line = _bleProcess.StandardOutput.ReadLine()) != null)
+                    Log($"[ErgBridge] {line}");
+            }
+            catch { }
+        });
+        _bridgeLogThread.IsBackground = true;
+        _bridgeLogThread.Start();
+    }
+
+    // ─── BLE Bridge TCP Loop ─────────────────────────────────────────────────
+
+    void BleBridgeLoop()
+    {
+        // Give the bridge process a moment to start its TCP listener
+        Thread.Sleep(2500);
+
+        while (_running)
+        {
+            try
+            {
+                lock (_dataLock) { _status = "Connecting to BLE bridge..."; }
+                Log("[C2-BLE] Connecting to ErgBridgeBLE on 127.0.0.1:6790");
+
+                _bleTcp    = new TcpClient("127.0.0.1", 6790);
+                _bleStream = _bleTcp.GetStream();
+
+                Log("[C2-BLE] Connected to BLE bridge.");
+                lock (_dataLock) { _status = "BLE bridge connected"; }
+
+                var reader = new StreamReader(_bleStream, System.Text.Encoding.UTF8);
+
+                while (_running && _bleTcp.Connected)
+                {
+                    string line = reader.ReadLine();
+                    if (line == null) break;   // stream closed
+                    ParseBleLine(line.Trim());
+                }
+            }
+            catch (Exception e)
+            {
+                if (_running) Warn($"[C2-BLE] TCP error: {e.Message}");
+            }
+
+            try { _bleStream?.Close(); } catch { }
+            try { _bleTcp?.Close();    } catch { }
+            _bleStream = null;
+            _bleTcp    = null;
+
+            lock (_dataLock) { _connected = false; _status = "BLE bridge disconnected"; }
+
+            if (_running)
+            {
+                Log("[C2-BLE] Reconnecting in 3s...");
+                Thread.Sleep(3000);
+            }
+        }
+    }
+
+    void ParseBleLine(string line)
+    {
+        if (string.IsNullOrEmpty(line)) return;
+
+        // Lightweight JSON field extractor — avoids needing Newtonsoft in Unity
+        string type = JsonField(line, "type");
+
+        if (type == "rep")
+        {
+            if (!int.TryParse(JsonField(line, "repCount"),    out int   repCount))   return;
+            if (!float.TryParse(JsonField(line, "driveTimeSec"),
+                    System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    out float driveTimeSec))                                          return;
+            if (!int.TryParse(JsonField(line, "pullDistance"), out int pullDist))    return;
+            int.TryParse(JsonField(line, "heartRate"),   out int hr);
+            float.TryParse(JsonField(line, "elapsedSec"),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out float elapsedSec);
+
+            if (repCount <= 0 || driveTimeSec <= 0f) return;
+
+            lock (_dataLock)
+            {
+                if (repCount > _repCount && pullDist > 0)
+                {
+                    _repTimeHist.Add(driveTimeSec);
+                    _pullDistHist.Add(pullDist);
+                }
+                _repCount = repCount;
+                _repTime  = driveTimeSec;
+                _pullDist = pullDist;
+                _hr       = hr > 0 ? hr : _hr;
+                _elapsed  = elapsedSec > 0f ? elapsedSec : _elapsed;
+                _active   = repCount > 0;
+                _status   = $"BLE Active (Rep #{repCount})";
+            }
+
+            _pendingReps.Enqueue(new PendingRep { num = repCount, time = driveTimeSec, dist = pullDist });
+        }
+        else if (type == "status")
+        {
+            bool.TryParse(JsonField(line, "connected"), out bool connected);
+            int.TryParse(JsonField(line, "heartRate"),   out int  hr);
+            float.TryParse(JsonField(line, "elapsedSec"),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out float elapsedSec);
+            string statusText = JsonField(line, "statusText");
+
+            lock (_dataLock)
+            {
+                _connected = connected;
+                if (hr > 0)          _hr      = hr;
+                if (elapsedSec > 0f) _elapsed = elapsedSec;
+                if (!string.IsNullOrEmpty(statusText)) _status = statusText;
+            }
+        }
+    }
+
+    // Extracts the string value of a JSON field by key (works for string, number, bool values)
+    static string JsonField(string json, string key)
+    {
+        string search = $"\"{key}\":";
+        int idx = json.IndexOf(search, StringComparison.Ordinal);
+        if (idx < 0) return "";
+
+        int valueStart = idx + search.Length;
+        while (valueStart < json.Length && json[valueStart] == ' ') valueStart++;
+        if (valueStart >= json.Length) return "";
+
+        if (json[valueStart] == '"')
+        {
+            // String value
+            int end = json.IndexOf('"', valueStart + 1);
+            return end < 0 ? "" : json.Substring(valueStart + 1, end - valueStart - 1);
+        }
+        else
+        {
+            // Number / bool / null — read until , or }
+            int end = valueStart;
+            while (end < json.Length && json[end] != ',' && json[end] != '}') end++;
+            return json.Substring(valueStart, end - valueStart).Trim();
+        }
     }
 
     /// <summary>Resets rep history. Call between sets if needed.</summary>

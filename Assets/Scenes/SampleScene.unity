@@ -737,6 +737,8 @@ MonoBehaviour:
   maxPushPerRep: 0.1
   rollbackSpeed: 0.022
   visualSmoothSpeed: 9
+  heightOffset: 0.5
+  rampOffsetAlongPath: 1
   rollDegreesPerProgress: 720
   pushWobbleDegrees: 6
 --- !u!135 &630019192
@@ -850,6 +852,8 @@ MonoBehaviour:
   boulderTransform: {fileID: 630019195}
   standOffsetBehind: 1.4
   standOffsetDown: 1.18
+  slopeHeightOffset: 0.5
+  rampOffsetAlongPath: 1
   followSmoothSpeed: 8
   lungeDist: 0.5
   lungeSpeed: 18
@@ -3535,6 +3539,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: 
   pollRateHz: 8
   simulateInput: 0
+  useBleWireless: 1
 --- !u!114 &1733902432
 MonoBehaviour:
   m_ObjectHideFlags: 0

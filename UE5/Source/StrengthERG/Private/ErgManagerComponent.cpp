@@ -1,0 +1,382 @@
+// ErgManagerComponent.cpp
+// UE5 port of Unity's ErgManager + ErgBridgeClient + Concept2UsbReader.
+//
+// Threading model:
+//   FErgReaderThread runs on a background FRunnableThread.
+//   It connects to ErgBridge via TCP, reads lines at ~10 Hz,
+//   and deposits parsed data into thread-safe structures.
+//   TickComponent() on the game thread drains the queue and
+//   fires delegates — identical to Unity's Update() pattern.
+
+#include "ErgManagerComponent.h"
+#include "Sockets.h"
+#include "SocketSubsystem.h"
+#include "Networking.h"
+#include "HAL/PlatformProcess.h"
+#include "Misc/Paths.h"
+#include "Misc/Parse.h"
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  FErgReaderThread
+// ─────────────────────────────────────────────────────────────────────────────
+
+bool FErgReaderThread::Init()
+{
+    return OwnerComp != nullptr;
+}
+
+uint32 FErgReaderThread::Run()
+{
+    ISocketSubsystem* SS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
+    if (!SS) return 1;
+
+    // Brief startup delay so ErgBridge has time to bind its port
+    FPlatformProcess::Sleep(2.5f);
+
+    while (bRunning && OwnerComp->bReading)
+    {
+        // ── Create socket ──────────────────────────────────────────────────
+        FSocket* Sock = SS->CreateSocket(NAME_Stream, TEXT("ErgBridgeClient"), false);
+        if (!Sock)
+        {
+            FPlatformProcess::Sleep(3.f);
+            continue;
+        }
+
+        TSharedRef<FInternetAddr> Addr = SS->CreateInternetAddr();
+        bool bIsValid = false;
+        Addr->SetIp(TEXT("127.0.0.1"), bIsValid);
+        Addr->SetPort(OwnerComp->BridgePortInternal);
+
+        if (!bIsValid || !Sock->Connect(*Addr))
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[ErgBridge] Connection failed, retrying in 3s..."));
+            SS->DestroySocket(Sock);
+            FPlatformProcess::Sleep(3.f);
+            continue;
+        }
+
+        UE_LOG(LogTemp, Log, TEXT("[ErgBridge] Connected on port %d"), OwnerComp->BridgePortInternal);
+
+        {
+            FScopeLock Lock(&OwnerComp->DataLock);
+            FErgData D;
+            D.bIsConnected = false;
+            D.StatusText   = TEXT("Bridge connected");
+            OwnerComp->ThreadSafe_UpdateData(D);
+        }
+
+        // Thread-local storage of the socket so Stop() can close it
+        OwnerComp->TcpSocket = Sock;
+
+        // ── Read loop ──────────────────────────────────────────────────────
+        TArray<uint8> Buffer;
+        Buffer.SetNumUninitialized(1024);
+        FString LineBuffer;
+
+        while (bRunning && OwnerComp->bReading)
+        {
+            int32 BytesRead = 0;
+
+            if (!Sock->HasPendingData((uint32&)BytesRead))
+            {
+                FPlatformProcess::Sleep(0.05f);  // 20 Hz poll max
+                continue;
+            }
+
+            if (!Sock->Recv(Buffer.GetData(), Buffer.Num(), BytesRead) || BytesRead == 0)
+                break;
+
+            // Append received bytes to line buffer, split on newline
+            FString Chunk = FString(BytesRead, UTF8_TO_TCHAR(
+                reinterpret_cast<const char*>(Buffer.GetData())));
+            LineBuffer += Chunk;
+
+            int32 NewlineIdx;
+            while (LineBuffer.FindChar(TEXT('\n'), NewlineIdx))
+            {
+                FString Line = LineBuffer.Left(NewlineIdx).TrimStartAndEnd();
+                LineBuffer   = LineBuffer.Mid(NewlineIdx + 1);
+
+                if (Line.IsEmpty()) continue;
+
+                if (OwnerComp->bBleMode)
+                    ParseJsonLine(Line);
+                else
+                    ParseCsvLine(Line);
+            }
+        }
+
+        // ── Cleanup ────────────────────────────────────────────────────────
+        OwnerComp->TcpSocket = nullptr;
+        SS->DestroySocket(Sock);
+
+        FErgData D;
+        D.bIsConnected = false;
+        D.StatusText   = TEXT("Disconnected");
+        OwnerComp->ThreadSafe_UpdateData(D);
+
+        if (bRunning && OwnerComp->bReading)
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[ErgBridge] Disconnected, reconnecting in 3s..."));
+            FPlatformProcess::Sleep(3.f);
+        }
+    }
+
+    return 0;
+}
+
+void FErgReaderThread::ParseCsvLine(const FString& Line)
+{
+    // Format: "rate,pace,power,connected\r\n"
+    TArray<FString> Parts;
+    Line.ParseIntoArray(Parts, TEXT(","), true);
+    if (Parts.Num() < 4) return;
+
+    FErgData D;
+    D.RepTimeSec   = FCString::Atof(*Parts[0]);  // stroke rate mapped as pace in bridge
+    D.ElapsedSeconds = FCString::Atof(*Parts[1]);
+    D.PullDistance = (int32)FCString::Atof(*Parts[2]);
+    D.bIsConnected = (Parts[3].TrimStartAndEnd() == TEXT("1"));
+    D.StatusText   = D.bIsConnected ? TEXT("Connected") : TEXT("ERG not connected");
+
+    OwnerComp->ThreadSafe_UpdateData(D);
+}
+
+void FErgReaderThread::ParseJsonLine(const FString& Line)
+{
+    // Lightweight JSON parse — mirrors Unity's JsonField() method.
+    // Fields: type, repCount, driveTimeSec, pullDistance, heartRate, elapsedSec, connected, statusText
+
+    auto GetField = [&](const FString& Key) -> FString
+    {
+        FString Search = FString::Printf(TEXT("\"%s\":"), *Key);
+        int32 Idx = Line.Find(Search);
+        if (Idx == INDEX_NONE) return TEXT("");
+
+        int32 Start = Idx + Search.Len();
+        while (Start < Line.Len() && Line[Start] == TEXT(' ')) ++Start;
+        if (Start >= Line.Len()) return TEXT("");
+
+        if (Line[Start] == TEXT('"'))
+        {
+            int32 End = Line.Find(TEXT("\""), ESearchCase::IgnoreCase, ESearchDir::FromStart, Start + 1);
+            return End != INDEX_NONE ? Line.Mid(Start + 1, End - Start - 1) : TEXT("");
+        }
+        else
+        {
+            int32 End = Start;
+            while (End < Line.Len() && Line[End] != TEXT(',') && Line[End] != TEXT('}')) ++End;
+            return Line.Mid(Start, End - Start).TrimStartAndEnd();
+        }
+    };
+
+    FString Type = GetField(TEXT("type"));
+
+    if (Type == TEXT("rep"))
+    {
+        int32 RepCount   = FCString::Atoi(*GetField(TEXT("repCount")));
+        float DriveTime  = FCString::Atof(*GetField(TEXT("driveTimeSec")));
+        int32 PullDist   = FCString::Atoi(*GetField(TEXT("pullDistance")));
+        int32 HR         = FCString::Atoi(*GetField(TEXT("heartRate")));
+        float Elapsed    = FCString::Atof(*GetField(TEXT("elapsedSec")));
+
+        if (RepCount <= 0 || DriveTime <= 0.f || PullDist <= 0) return;
+
+        FErgData D;
+        D.RepCount       = RepCount;
+        D.RepTimeSec     = DriveTime;
+        D.PullDistance   = PullDist;
+        D.HeartRate      = HR;
+        D.ElapsedSeconds = Elapsed;
+        D.bIsConnected   = true;
+        D.bIsActive      = true;
+        D.StatusText     = FString::Printf(TEXT("BLE Active (Rep #%d)"), RepCount);
+
+        OwnerComp->ThreadSafe_UpdateData(D);
+        OwnerComp->ThreadSafe_EnqueueRep(RepCount, DriveTime, PullDist);
+    }
+    else if (Type == TEXT("status"))
+    {
+        bool  bConnected = GetField(TEXT("connected")).ToBool();
+        int32 HR         = FCString::Atoi(*GetField(TEXT("heartRate")));
+        float Elapsed    = FCString::Atof(*GetField(TEXT("elapsedSec")));
+        FString StatusTxt = GetField(TEXT("statusText"));
+
+        FErgData D;
+        D.bIsConnected   = bConnected;
+        D.HeartRate      = HR;
+        D.ElapsedSeconds = Elapsed;
+        D.StatusText     = StatusTxt.IsEmpty() ? TEXT("BLE status") : StatusTxt;
+
+        OwnerComp->ThreadSafe_UpdateData(D);
+    }
+}
+
+void FErgReaderThread::Stop()
+{
+    bRunning = false;
+    if (OwnerComp && OwnerComp->TcpSocket)
+        OwnerComp->TcpSocket->Close();
+}
+
+void FErgReaderThread::Exit()
+{
+    bRunning = false;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  UErgManagerComponent
+// ─────────────────────────────────────────────────────────────────────────────
+
+UErgManagerComponent::UErgManagerComponent()
+{
+    PrimaryComponentTick.bCanEverTick = true;
+}
+
+void UErgManagerComponent::BeginPlay()
+{
+    Super::BeginPlay();
+
+    if (bSimulateInput)
+    {
+        LatestData.bIsConnected = true;
+        LatestData.StatusText   = TEXT("Simulated");
+        UE_LOG(LogTemp, Log, TEXT("[ErgManager] Simulation mode."));
+        return;
+    }
+
+    BridgePortInternal = bUseBleWireless ? 6790 : BridgePort;
+    bBleMode           = bUseBleWireless;
+    bReading           = true;
+
+    LaunchBridgeProcess();
+
+    ReaderRunnable = new FErgReaderThread(this);
+    ReaderThread   = FRunnableThread::Create(ReaderRunnable, TEXT("ErgReaderThread"),
+                                             0, TPri_BelowNormal);
+}
+
+void UErgManagerComponent::TickComponent(float DeltaTime, ELevelTick TickType,
+                                         FActorComponentTickFunction* ThisTickFunction)
+{
+    Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+
+    if (bSimulateInput)
+    {
+        LatestData.RepTimeSec  = SimulatedStrokeRate;
+        LatestData.PullDistance = (int32)SimulatedPower;
+        LatestData.ElapsedSeconds = SimulatedPaceSec;
+        return;
+    }
+
+    // Copy shared data to game-thread cache
+    {
+        FScopeLock Lock(&DataLock);
+        LatestData = SharedData;
+    }
+
+    // Fire new-rep events
+    TArray<FPendingRep> Reps;
+    {
+        FScopeLock Lock(&RepLock);
+        Reps = MoveTemp(PendingReps);
+    }
+
+    for (const FPendingRep& Rep : Reps)
+    {
+        // Only fire if rep count advanced (handles thread races)
+        if (Rep.RepNumber > LastRepCount)
+        {
+            LastRepCount = Rep.RepNumber;
+            OnNewRep.Broadcast(Rep.RepNumber, Rep.RepTimeSec, Rep.PullDistance);
+        }
+    }
+
+    OnErgDataUpdated.Broadcast(LatestData);
+}
+
+void UErgManagerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
+{
+    bReading = false;
+
+    if (ReaderRunnable) ReaderRunnable->Stop();
+    if (ReaderThread)
+    {
+        ReaderThread->WaitForCompletion();
+        delete ReaderThread;
+        ReaderThread = nullptr;
+    }
+    delete ReaderRunnable;
+    ReaderRunnable = nullptr;
+
+    KillBridgeProcess();
+    Super::EndPlay(EndPlayReason);
+}
+
+void UErgManagerComponent::ThreadSafe_UpdateData(const FErgData& NewData)
+{
+    FScopeLock Lock(&DataLock);
+
+    // Merge: don't overwrite non-zero cached values with zeros from partial updates
+    if (NewData.RepCount      > 0) SharedData.RepCount      = NewData.RepCount;
+    if (NewData.RepTimeSec    > 0) SharedData.RepTimeSec    = NewData.RepTimeSec;
+    if (NewData.PullDistance  > 0) SharedData.PullDistance  = NewData.PullDistance;
+    if (NewData.ElapsedSeconds > 0) SharedData.ElapsedSeconds = NewData.ElapsedSeconds;
+    if (NewData.HeartRate     > 0) SharedData.HeartRate     = NewData.HeartRate;
+
+    SharedData.bIsConnected = NewData.bIsConnected;
+    SharedData.bIsActive    = NewData.bIsActive;
+    if (!NewData.StatusText.IsEmpty())
+        SharedData.StatusText = NewData.StatusText;
+}
+
+void UErgManagerComponent::ThreadSafe_EnqueueRep(int32 Num, float Time, int32 Dist)
+{
+    FScopeLock Lock(&RepLock);
+    FPendingRep R;
+    R.RepNumber   = Num;
+    R.RepTimeSec  = Time;
+    R.PullDistance = Dist;
+    PendingReps.Add(R);
+}
+
+void UErgManagerComponent::LaunchBridgeProcess()
+{
+    FString FullPath = FPaths::ConvertRelativePathToFull(
+        FPaths::ProjectDir() / BridgeExePath);
+
+    if (!FPaths::FileExists(FullPath))
+    {
+        UE_LOG(LogTemp, Error, TEXT("[ErgManager] ErgBridge not found at: %s"), *FullPath);
+        return;
+    }
+
+    BridgeProcessHandle = FPlatformProcess::CreateProc(
+        *FullPath,          // exe
+        TEXT(""),           // args
+        true,               // bLaunchDetached
+        true,               // bLaunchHidden
+        true,               // bLaunchReallyHidden
+        nullptr,            // out PID
+        0,                  // priority
+        nullptr,            // opt dir
+        nullptr,            // pipe write
+        nullptr             // pipe read
+    );
+
+    if (BridgeProcessHandle.IsValid())
+        UE_LOG(LogTemp, Log, TEXT("[ErgManager] ErgBridge launched."));
+    else
+        UE_LOG(LogTemp, Error, TEXT("[ErgManager] Failed to launch ErgBridge."));
+}
+
+void UErgManagerComponent::KillBridgeProcess()
+{
+    if (BridgeProcessHandle.IsValid())
+    {
+        FPlatformProcess::TerminateProc(BridgeProcessHandle, true);
+        FPlatformProcess::CloseProc(BridgeProcessHandle);
+        UE_LOG(LogTemp, Log, TEXT("[ErgManager] ErgBridge killed."));
+    }
+}

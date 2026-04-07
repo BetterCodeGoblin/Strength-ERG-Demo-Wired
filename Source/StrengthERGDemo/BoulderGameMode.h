@@ -82,7 +82,7 @@ public:
     // ── Read-Only State ───────────────────────────────────────────────────────
 
     UPROPERTY(BlueprintReadOnly, Category = "Boulder|State")
-    EBoulderGameState GameState = EBoulderGameState::Idle;
+    EBoulderGameState CurrentBoulderGameState = EBoulderGameState::Idle;
 
     UPROPERTY(BlueprintReadOnly, Category = "Boulder|State")
     float TimeRemaining = 0.f;

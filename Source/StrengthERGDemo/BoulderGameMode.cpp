@@ -33,7 +33,7 @@ void ABoulderGameMode::Tick(float DeltaTime)
 {
     Super::Tick(DeltaTime);
 
-    switch (GameState)
+    switch (CurrentBoulderGameState)
     {
         case EBoulderGameState::Countdown:
         {
@@ -78,7 +78,7 @@ void ABoulderGameMode::Tick(float DeltaTime)
 
 void ABoulderGameMode::StartGame()
 {
-    if (GameState == EBoulderGameState::Playing || GameState == EBoulderGameState::Countdown)
+    if (CurrentBoulderGameState == EBoulderGameState::Playing || CurrentBoulderGameState == EBoulderGameState::Countdown)
         return;
 
     if (BoulderActorRef)
@@ -100,7 +100,7 @@ void ABoulderGameMode::StartGame()
 
 void ABoulderGameMode::NotifyAnimationPeak()
 {
-    if (GameState != EBoulderGameState::Playing) return;
+    if (CurrentBoulderGameState != EBoulderGameState::Playing) return;
     if (QTE) QTE->ForceOpenWindow(AnimationWindowDuration);
 }
 
@@ -117,16 +117,16 @@ void ABoulderGameMode::FireSimulatedRep()
 void ABoulderGameMode::HandleNewRep(const FRepData& Rep)
 {
     UE_LOG(LogTemp, Log, TEXT("[BoulderGame] Rep #%d received — state=%d, pull=%d, power=%.1f"),
-        Rep.RepNumber, (int32)GameState, Rep.PullDistance, Rep.RepPower);
+        Rep.RepNumber, (int32)CurrentBoulderGameState, Rep.PullDistance, Rep.RepPower);
 
     // Auto-start: first row on Idle screen kicks off the countdown
-    if (GameState == EBoulderGameState::Idle)
+    if (CurrentBoulderGameState == EBoulderGameState::Idle)
     {
         StartGame();
         return;
     }
 
-    if (GameState != EBoulderGameState::Playing) return;
+    if (CurrentBoulderGameState != EBoulderGameState::Playing) return;
 
     TimeSinceLastRep = 0.f;
     TotalReps++;
@@ -181,7 +181,7 @@ void ABoulderGameMode::HandleNewRep(const FRepData& Rep)
 
 void ABoulderGameMode::ChangeState(EBoulderGameState NewState)
 {
-    GameState = NewState;
+    CurrentBoulderGameState = NewState;
 
     if (QTE)
     {
@@ -196,7 +196,7 @@ void ABoulderGameMode::ChangeState(EBoulderGameState NewState)
 
 void ABoulderGameMode::EndGame(bool bWon)
 {
-    if (GameState != EBoulderGameState::Playing) return;
+    if (CurrentBoulderGameState != EBoulderGameState::Playing) return;
 
     FGameStats Stats = BuildStats(bWon);
     ChangeState(bWon ? EBoulderGameState::Won : EBoulderGameState::Lost);

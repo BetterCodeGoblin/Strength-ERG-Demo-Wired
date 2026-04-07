@@ -36,13 +36,13 @@ void ABoulderActor::BeginPlay()
 void ABoulderActor::Push(float RepPower, float CombinedMultiplier)
 {
     float Gain = FMath::Clamp(RepPower * PowerScale * CombinedMultiplier, 0.f, MaxPushPerRep);
-    Progress   = FMath::Clamp01(Progress + Gain);
+    Progress   = FMath::Clamp(Progress + Gain, 0.f, 1.f);
     WobbleAngle = PushWobbleDegrees;
 }
 
 void ABoulderActor::ApplyRollback(float DeltaTime)
 {
-    Progress = FMath::Clamp01(Progress - RollbackSpeed * DeltaTime);
+    Progress = FMath::Clamp(Progress - RollbackSpeed * DeltaTime, 0.f, 1.f);
 }
 
 void ABoulderActor::ResetPosition()
@@ -68,7 +68,7 @@ void ABoulderActor::Tick(float DeltaTime)
     // Smooth visual progress toward logical with a critically-damped spring
     // UE doesn't ship SmoothDamp but a simple exponential approach works:
     VisualVelocity  = FMath::Lerp(VisualVelocity, (Progress - VisualProgress) / FMath::Max(VisualSmoothTime, KINDA_SMALL_NUMBER), DeltaTime * 10.f);
-    VisualProgress  = FMath::Clamp01(VisualProgress + VisualVelocity * DeltaTime);
+    VisualProgress  = FMath::Clamp(VisualProgress + VisualVelocity * DeltaTime, 0.f, 1.f);
 
     // Update world position
     if (PathStart && PathEnd)

@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnWindowOpened);
-DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnWindowClosed);
+DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnQTEWindowClosed);
 
 // ─────────────────────────────────────────────────────────────────────────────
 //  UQTEComponent
@@ -70,7 +70,7 @@ public:
     FOnWindowOpened OnWindowOpened;
 
     UPROPERTY(BlueprintAssignable, Category = "QTE|Events")
-    FOnWindowClosed OnWindowClosed;
+    FOnQTEWindowClosed OnWindowClosed;
 
     // ── Public API ────────────────────────────────────────────────────────────
 

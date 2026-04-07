@@ -7,7 +7,7 @@ public class StrengthERGDemoEditorTarget : TargetRules
 	{
 		Type = TargetType.Editor;
 		DefaultBuildSettings = BuildSettingsVersion.V3;
-		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_3;
+		IncludeOrderVersion = EngineIncludeOrderVersion.Unreal5_6;
 		ExtraModuleNames.Add("StrengthERGDemo");
 	}
 }

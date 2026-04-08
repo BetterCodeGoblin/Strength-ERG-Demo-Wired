@@ -43,6 +43,10 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boulder|References")
     TObjectPtr<ABoulderActor> BoulderActorRef;
 
+    /** Animation montage for the player character's push animation */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boulder|References")
+    TObjectPtr<class UAnimMontage> PushAnimationMontage;
+
     // ── Game Rules ────────────────────────────────────────────────────────────
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Boulder|Rules")

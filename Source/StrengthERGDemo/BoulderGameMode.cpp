@@ -2,6 +2,8 @@
 #include "BoulderActor.h"
 #include "ErgManagerComponent.h"
 #include "QTEComponent.h"
+#include "PlayerCharacter.h"
+#include "HudManager.h"
 #include "Engine/World.h"
 #include "Kismet/GameplayStatics.h"
 #include "GameFramework/PlayerController.h"
@@ -24,6 +26,28 @@ void ABoulderGameMode::BeginPlay()
     {
         ErgManager->bSimulateInput = bSimulateInput;
         ErgManager->OnNewRep.AddDynamic(this, &ABoulderGameMode::HandleNewRep);
+    }
+
+    // Spawn player character if not already in world
+    APlayerCharacter* PlayerChar = GetWorld()->SpawnActor<APlayerCharacter>();
+    if (PlayerChar)
+    {
+        PlayerChar->BoulderRef = BoulderActorRef;
+        PlayerChar->GameModeRef = this;
+        PlayerChar->PushMontage = PushAnimationMontage;
+        PlayerChar->InitializeCharacter();
+        UE_LOG(LogTemp, Log, TEXT("[GameMode] Spawned PlayerCharacter"));
+    }
+
+    // Spawn HUD manager
+    AHudManager* HudMgr = GetWorld()->SpawnActor<AHudManager>();
+    if (HudMgr)
+    {
+        if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
+        {
+            PC->MyHUD = HudMgr;
+        }
+        UE_LOG(LogTemp, Log, TEXT("[GameMode] Spawned HudManager"));
     }
 
     ChangeState(EBoulderGameState::Idle);

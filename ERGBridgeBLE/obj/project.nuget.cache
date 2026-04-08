@@ -1,0 +1,31 @@
+{
+  "version": 2,
+  "dgSpecHash": "ntd4kvBmf0U=",
+  "success": false,
+  "projectFilePath": "C:\\Users\\jsypherd.ASURITE\\StrengthERG-UE5\\ERGBridgeBLE\\ErgBridgeBLE.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.net.illink.tasks\\8.0.24\\microsoft.net.illink.tasks.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.netcore.app.ref\\8.0.24\\microsoft.netcore.app.ref.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.24\\microsoft.netcore.app.runtime.win-x64.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.windowsdesktop.app.ref\\8.0.24\\microsoft.windowsdesktop.app.ref.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.24\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.aspnetcore.app.ref\\8.0.24\\microsoft.aspnetcore.app.ref.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.24\\microsoft.aspnetcore.app.runtime.win-x64.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.netcore.app.crossgen2.win-x64\\8.0.24\\microsoft.netcore.app.crossgen2.win-x64.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.netcore.app.host.win-x64\\8.0.24\\microsoft.netcore.app.host.win-x64.8.0.24.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1101",
+      "level": "Error",
+      "message": "Unable to find package Windows.Win32. No packages exist with this id in source(s): Microsoft Visual Studio Offline Packages, nuget.org",
+      "projectPath": "C:\\Users\\jsypherd.ASURITE\\StrengthERG-UE5\\ERGBridgeBLE\\ErgBridgeBLE.csproj",
+      "filePath": "C:\\Users\\jsypherd.ASURITE\\StrengthERG-UE5\\ERGBridgeBLE\\ErgBridgeBLE.csproj",
+      "libraryId": "Windows.Win32",
+      "targetGraphs": [
+        "net8.0",
+        "net8.0/win-x64"
+      ]
+    }
+  ]
+}

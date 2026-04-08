@@ -1,0 +1,15 @@
+{
+  "version": 2,
+  "dgSpecHash": "8NM2LD5RftY=",
+  "success": true,
+  "projectFilePath": "C:\\Users\\jsypherd.ASURITE\\StrengthERG-UE5\\ERGBridge\\ErgBridge.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\hidsharp\\2.6.4\\hidsharp.2.6.4.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.net.illink.tasks\\8.0.24\\microsoft.net.illink.tasks.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.netcore.app.runtime.win-x64\\8.0.24\\microsoft.netcore.app.runtime.win-x64.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.windowsdesktop.app.runtime.win-x64\\8.0.24\\microsoft.windowsdesktop.app.runtime.win-x64.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.aspnetcore.app.runtime.win-x64\\8.0.24\\microsoft.aspnetcore.app.runtime.win-x64.8.0.24.nupkg.sha512",
+    "C:\\Users\\jsypherd.ASURITE\\.nuget\\packages\\microsoft.netcore.app.crossgen2.win-x64\\8.0.24\\microsoft.netcore.app.crossgen2.win-x64.8.0.24.nupkg.sha512"
+  ],
+  "logs": []
+}

@@ -1,0 +1,7 @@
+c:\Users\jsypherd.ASURITE\StrengthERG1\ERGBridgeBLE\ErgBridgeBLE.exe
+c:\Users\jsypherd.ASURITE\StrengthERG1\ERGBridgeBLE\ErgBridgeBLE.dll
+c:\Users\jsypherd.ASURITE\StrengthERG1\ERGBridgeBLE\ErgBridgeBLE.deps.json
+c:\Users\jsypherd.ASURITE\StrengthERG1\ERGBridgeBLE\ErgBridgeBLE.runtimeconfig.json
+c:\Users\jsypherd.ASURITE\StrengthERG1\ERGBridgeBLE\ErgBridgeBLE.pdb
+c:\Users\jsypherd.ASURITE\StrengthERG1\ERGBridgeBLE\Microsoft.Windows.SDK.NET.dll
+c:\Users\jsypherd.ASURITE\StrengthERG1\ERGBridgeBLE\WinRT.Runtime.dll

@@ -83,6 +83,21 @@ Game Logic (BoulderGameMode, QTEComponent, etc.)
 ### Port Configuration:
 - **ErgBridge**: Port 6789 (USB HID protocol)
 - **ErgBridgeBLE**: Port 6790 (Bluetooth LE protocol)
+- **UE5 default in this branch**: 6790, because the active target workflow for this project is BLE-first
+
+## Recommended Runtime Path (StrengthERG Project)
+
+For this project, use the same practical methodology as the Unity version:
+1. Start `ERGBridgeBLE.exe`
+2. Confirm it detects the StrengthERG/PM5 and starts its TCP server on `127.0.0.1:6790`
+3. Launch Unreal
+4. Let `UErgManagerComponent` connect to `127.0.0.1:6790`
+
+If Unreal still tries to use `6789`, you are either running stale binaries or an out-of-date class default. Rebuild the UE project and reopen the editor.
+
+## Current Known Limitation
+
+The UE repo is now aligned to the BLE-first port and startup flow, but the exact payload contract between `ERGBridgeBLE.exe` and `UErgManagerComponent` should still be verified against live runtime output if reps are not appearing in gameplay.
 
 ## Integration Points
 

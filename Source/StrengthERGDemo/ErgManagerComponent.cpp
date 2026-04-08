@@ -102,7 +102,7 @@ void UErgManagerComponent::BeginPlay()
     if (bSimulateInput)
     {
         bIsConnected = true;
-        UE_LOG(LogTemp, Log, TEXT("[ErgManager] Simulation mode active."));
+        UE_LOG(LogTemp, Log, TEXT("[ErgManager] Simulation mode active. Bridge target %s:%d"), *BridgeHost, BridgePort);
         return;
     }
 
@@ -176,13 +176,13 @@ void UErgManagerComponent::AttemptConnect()
 
     if (!Socket->Connect(*InternetAddr))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[ErgManager] Could not connect to ErgBridge at %s:%d"), *BridgeHost, BridgePort);
+        UE_LOG(LogTemp, Warning, TEXT("[ErgManager] Could not connect to bridge at %s:%d"), *BridgeHost, BridgePort);
         SocketSub->DestroySocket(Socket);
         Socket = nullptr;
         return;
     }
 
-    UE_LOG(LogTemp, Log, TEXT("[ErgManager] Connected to ErgBridge at %s:%d"), *BridgeHost, BridgePort);
+    UE_LOG(LogTemp, Log, TEXT("[ErgManager] Connected to bridge at %s:%d"), *BridgeHost, BridgePort);
     bIsConnected = true;
     OnErgConnectionChanged.Broadcast(true);
 

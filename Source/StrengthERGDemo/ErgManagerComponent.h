@@ -39,12 +39,12 @@ struct FErgStagingBuffer
 // ─────────────────────────────────────────────────────────────────────────────
 //  UErgManagerComponent
 //
-//  Owns the TCP socket to ErgBridge (localhost:6789) and fires events.
+//  Owns the TCP socket to the bridge process (USB or BLE) and fires events.
 //  Attach to the GameMode or a persistent actor.
 //
 //  Protocol:
 //    Send: 0x01 (single byte request)
-//    Recv: "rate,pace,power,connected[,repNum,repTime,pullDist]\n"
+//    Recv: bridge frame payload over TCP (expected CSV from bridge runtime)
 //          Fields 5-7 are optional and present only when a new rep is ready.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -62,7 +62,7 @@ public:
     FString BridgeHost = TEXT("127.0.0.1");
 
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERG|Bridge")
-    int32 BridgePort = 6789;
+    int32 BridgePort = 6790;
 
     /** Seconds to wait after BeginPlay before first connect attempt */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "ERG|Bridge")

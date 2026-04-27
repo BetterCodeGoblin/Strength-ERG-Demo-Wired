@@ -68,8 +68,13 @@ public:
     virtual void   Exit()   override;
 
 private:
+    void ParseCsvLine(const FString& Line);
+    void ParseJsonLine(const FString& Line);
+
     class UErgManagerComponent* OwnerComp;
     bool bRunning = true;
+
+    friend class UErgManagerComponent;
 };
 
 // ── Component ──────────────────────────────────────────────────────────────

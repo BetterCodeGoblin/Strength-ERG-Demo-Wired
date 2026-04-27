@@ -59,7 +59,6 @@ uint32 FErgReaderThread::Run()
         UE_LOG(LogTemp, Log, TEXT("[ErgBridge] Connected on port %d"), OwnerComp->BridgePortInternal);
 
         {
-            FScopeLock Lock(&OwnerComp->DataLock);
             FErgData D;
             D.bIsConnected = false;
             D.StatusText   = TEXT("Bridge connected");
@@ -366,9 +365,13 @@ void UErgManagerComponent::LaunchBridgeProcess()
     );
 
     if (BridgeProcessHandle.IsValid())
+    {
         UE_LOG(LogTemp, Log, TEXT("[ErgManager] ErgBridge launched."));
+    }
     else
+    {
         UE_LOG(LogTemp, Error, TEXT("[ErgManager] Failed to launch ErgBridge."));
+    }
 }
 
 void UErgManagerComponent::KillBridgeProcess()

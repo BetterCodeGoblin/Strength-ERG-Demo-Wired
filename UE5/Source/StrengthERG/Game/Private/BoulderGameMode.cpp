@@ -15,6 +15,7 @@
 #include "TimerManager.h"
 #include "GameFramework/PlayerController.h"
 #include "Camera/CameraActor.h"
+#include "Camera/CameraActor.h"
 
 ABoulderGameMode::ABoulderGameMode()
 {
@@ -70,6 +71,30 @@ void ABoulderGameMode::BeginPlay()
     if (bSimulateInput)
     {
         UE_LOG(LogTemp, Log, TEXT("[BoulderGame][SIM] Simulate input mode is ACTIVE. Press Spacebar to start/rep."));
+    }
+
+    // Auto-find a CameraActor in the level if not explicitly assigned
+    if (!GameCamera)
+    {
+        for (TActorIterator<ACameraActor> It(GetWorld()); It; ++It)
+        {
+            GameCamera = *It;
+            break;
+        }
+    }
+
+    if (GameCamera)
+    {
+        APlayerController* PC = GetWorld()->GetFirstPlayerController();
+        if (PC)
+        {
+            PC->SetViewTargetWithBlend(GameCamera);
+            UE_LOG(LogTemp, Log, TEXT("[BoulderGame] Game camera activated: %s"), *GameCamera->GetName());
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[BoulderGame] No CameraActor found in level — using default view."));
     }
 
     // Auto-find a CameraActor in the level if not explicitly assigned

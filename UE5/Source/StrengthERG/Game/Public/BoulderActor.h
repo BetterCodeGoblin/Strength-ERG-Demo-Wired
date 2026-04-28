@@ -19,6 +19,8 @@
 #include "GameFramework/Actor.h"
 #include "BoulderActor.generated.h"
 
+class ABoulderPathMarker;
+
 UCLASS()
 class STRENGTHERG_API ABoulderActor : public AActor
 {
@@ -29,13 +31,25 @@ public:
 
     // ── Path ──────────────────────────────────────────────────────────────────
 
-    /** World location of the foot of the hill (progress = 0). */
+    /** Actor placed in the level at the foot of the hill (progress = 0).
+     *  Equivalent to Unity's pathStart GameObject. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Path")
-    FVector PathStart = FVector::ZeroVector;
+    ABoulderPathMarker* PathStartMarker = nullptr;
 
-    /** World location of the top of the hill (progress = 1). */
+    /** Actor placed in the level at the top of the hill (progress = 1).
+     *  Equivalent to Unity's pathEnd GameObject. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Path")
-    FVector PathEnd = FVector(0.f, 0.f, 1000.f);
+    ABoulderPathMarker* PathEndMarker = nullptr;
+
+    /** Fallback used only when no markers are placed. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Path",
+              meta = (EditCondition = "PathStartMarker == nullptr"))
+    FVector FallbackPathStart = FVector::ZeroVector;
+
+    /** Fallback used only when no markers are placed. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Path",
+              meta = (EditCondition = "PathEndMarker == nullptr"))
+    FVector FallbackPathEnd = FVector(0.f, 0.f, 1000.f);
 
     // ── Push Tuning ───────────────────────────────────────────────────────────
 
@@ -61,7 +75,7 @@ public:
 
     /** Scale height offset linearly from 0 at bottom to full at top. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
-    bool bRampOffsetAlongPath = true;
+    bool bRampOffsetAlongPath = false;
 
     /** Degrees of rotation per unit of progress (rolling appearance). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
@@ -70,6 +84,11 @@ public:
     /** Wobble impulse magnitude on each push. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals")
     float PushWobbleDegrees = 6.f;
+
+    /** How quickly VisualProgress catches up to logical Progress (seconds).
+     *  Lower = snappier. 0.25 was the original hardcoded value. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Visuals", meta = (ClampMin = "0.01", ClampMax = "1.0"))
+    float VisualSmoothTime = 0.08f;
 
     // ── State ─────────────────────────────────────────────────────────────────
 
@@ -106,6 +125,10 @@ public:
 #endif
 
 private:
+    // Resolved world positions — set from markers in BeginPlay, or from fallback vectors.
+    FVector PathStart = FVector::ZeroVector;
+    FVector PathEnd   = FVector(0.f, 0.f, 1000.f);
+
     float Progress      = 0.f;
     float VisualProgress = 0.f;
     float VelocityRef   = 0.f;  // for SmoothDamp

@@ -13,6 +13,7 @@
 #include "Engine/World.h"
 #include "TimerManager.h"
 #include "GameFramework/PlayerController.h"
+#include "Camera/CameraActor.h"
 
 ABoulderGameMode::ABoulderGameMode()
 {
@@ -50,6 +51,35 @@ void ABoulderGameMode::BeginPlay()
         UE_LOG(LogTemp, Warning, TEXT("[BoulderGame] UErgManagerComponent not found — enable SimulateInput for testing."));
     }
 
+    if (bSimulateInput)
+    {
+        UE_LOG(LogTemp, Log, TEXT("[BoulderGame][SIM] Simulate input mode is ACTIVE. Press Spacebar to start/rep."));
+    }
+
+    // Auto-find a CameraActor in the level if not explicitly assigned
+    if (!GameCamera)
+    {
+        for (TActorIterator<ACameraActor> It(GetWorld()); It; ++It)
+        {
+            GameCamera = *It;
+            break;
+        }
+    }
+
+    if (GameCamera)
+    {
+        APlayerController* PC = GetWorld()->GetFirstPlayerController();
+        if (PC)
+        {
+            PC->SetViewTargetWithBlend(GameCamera);
+            UE_LOG(LogTemp, Log, TEXT("[BoulderGame] Game camera activated: %s"), *GameCamera->GetName());
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[BoulderGame] No CameraActor found in level — using default view."));
+    }
+
     ChangeState(EBoulderGameState::Idle);
 }
 
@@ -58,6 +88,33 @@ void ABoulderGameMode::Tick(float DeltaTime)
     Super::Tick(DeltaTime);
 
     UpdateQTE(DeltaTime);
+
+    // ── Simulation input ──────────────────────────────────────────────────────
+    // Polled BEFORE the state switch so Spacebar works from Idle (starts game)
+    // and from Playing (fires reps). Hardware PM5 path is unaffected.
+    if (bSimulateInput)
+    {
+        APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+        if (PC && PC->WasInputKeyJustPressed(EKeys::SpaceBar))
+        {
+            UE_LOG(LogTemp, Log, TEXT("[BoulderGame][SIM] Spacebar detected | State=%d"), (int32)State);
+
+            if (State == EBoulderGameState::Idle ||
+                State == EBoulderGameState::Won  ||
+                State == EBoulderGameState::Lost)
+            {
+                UE_LOG(LogTemp, Log, TEXT("[BoulderGame][SIM] Calling StartGame() from sim path"));
+                StartGame();
+            }
+            else if (State == EBoulderGameState::Playing)
+            {
+                UE_LOG(LogTemp, Log, TEXT("[BoulderGame][SIM] Injecting simulated rep #%d | pull=%d | time=%.2f"),
+                       SimRepNumber + 1, SimPullDistance, SimRepTimeSec);
+                HandleNewRep(++SimRepNumber, SimRepTimeSec, SimPullDistance);
+            }
+            // Spacebar during Countdown is intentionally ignored — let it tick down.
+        }
+    }
 
     switch (State)
     {
@@ -79,15 +136,6 @@ void ABoulderGameMode::Tick(float DeltaTime)
         if (TimeSinceLastRep > RollbackDelaySec && Boulder)
             Boulder->ApplyRollback(DeltaTime);
 
-        // Keyboard simulation — press Spacebar to fire a simulated rep
-        if (bSimulateInput)
-        {
-            // Poll via PlayerController (UE5 doesn't have Input.GetKeyDown in GameMode)
-            APlayerController* PC = GetWorld()->GetFirstPlayerController();
-            if (PC && PC->WasInputKeyJustPressed(EKeys::SpaceBar))
-                HandleNewRep(++SimRepNumber, SimRepTimeSec, SimPullDistance);
-        }
-
         // Win/Lose checks
         if (Boulder && Boulder->IsAtTop())
             EndGame(true);
@@ -108,6 +156,8 @@ void ABoulderGameMode::StartGame()
 {
     if (State == EBoulderGameState::Playing || State == EBoulderGameState::Countdown)
         return;
+
+    UE_LOG(LogTemp, Log, TEXT("[BoulderGame] StartGame() called | bSimulateInput=%d"), (int32)bSimulateInput);
 
     if (Boulder) Boulder->ResetPosition();
 

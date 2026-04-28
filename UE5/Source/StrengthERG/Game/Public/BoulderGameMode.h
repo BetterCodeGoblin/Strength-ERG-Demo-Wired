@@ -21,6 +21,7 @@
 
 class ABoulderActor;
 class UErgManagerComponent;
+class ACameraActor;
 
 // ── Delegates (replaces Unity's UnityEvent onGameWon / onGameLost) ────────────
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnGameWon);
@@ -39,6 +40,10 @@ public:
     /** The boulder actor in the level. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
     ABoulderActor* Boulder = nullptr;
+
+    /** Optional camera actor to activate on PIE start. Assign in editor. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+    ACameraActor* GameCamera = nullptr;
 
     // ── Game Rules ────────────────────────────────────────────────────────────
 

@@ -9,6 +9,7 @@
 //   5. Rolling axis: Cross(FVector::UpVector, HillForward) — same math.
 
 #include "BoulderActor.h"
+#include "BoulderPathMarker.h"
 #include "Components/StaticMeshComponent.h"
 #include "DrawDebugHelpers.h"
 #include "Math/UnrealMathUtility.h"
@@ -24,6 +25,32 @@ ABoulderActor::ABoulderActor()
 void ABoulderActor::BeginPlay()
 {
     Super::BeginPlay();
+
+    // Resolve path from placed markers, falling back to raw FVectors if none assigned.
+    if (PathStartMarker)
+    {
+        PathStart = PathStartMarker->GetActorLocation();
+        UE_LOG(LogTemp, Log, TEXT("[Boulder] PathStart resolved from marker '%s': %s"),
+               *PathStartMarker->GetName(), *PathStart.ToString());
+    }
+    else
+    {
+        PathStart = FallbackPathStart;
+        UE_LOG(LogTemp, Warning, TEXT("[Boulder] No PathStartMarker assigned — using FallbackPathStart."));
+    }
+
+    if (PathEndMarker)
+    {
+        PathEnd = PathEndMarker->GetActorLocation();
+        UE_LOG(LogTemp, Log, TEXT("[Boulder] PathEnd resolved from marker '%s': %s"),
+               *PathEndMarker->GetName(), *PathEnd.ToString());
+    }
+    else
+    {
+        PathEnd = FallbackPathEnd;
+        UE_LOG(LogTemp, Warning, TEXT("[Boulder] No PathEndMarker assigned — using FallbackPathEnd."));
+    }
+
     ResetPosition();
 }
 
@@ -33,7 +60,7 @@ void ABoulderActor::Tick(float DeltaTime)
 
     // ── Smooth position (replicates Unity SmoothDamp) ─────────────────────────
     float PrevVisual = VisualProgress;
-    VisualProgress = SmoothDamp(VisualProgress, Progress, VelocityRef, 0.25f, DeltaTime);
+    VisualProgress = SmoothDamp(VisualProgress, Progress, VelocityRef, VisualSmoothTime, DeltaTime);
 
     // ── World position along path + height offset ─────────────────────────────
     FVector NewPos = ComputePathPosition(VisualProgress);
@@ -83,6 +110,9 @@ void ABoulderActor::Push(float RepPower, float CombinedMultiplier)
     float Gain  = FMath::Clamp(RepPower * PowerScale * CombinedMultiplier, 0.f, MaxPushPerRep);
     Progress    = FMath::Clamp(Progress + Gain, 0.f, 1.f);
     Wobble      = PushWobbleDegrees;
+
+    UE_LOG(LogTemp, Log, TEXT("[Boulder] Push | power=%.1f mult=%.2f gain=%.4f | Progress=%.4f VisualProgress=%.4f"),
+           RepPower, CombinedMultiplier, Gain, Progress, VisualProgress);
 }
 
 void ABoulderActor::ApplyRollback(float DeltaTime)

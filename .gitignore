@@ -31,6 +31,18 @@ crashlytics-build.properties
 # .NET build artifacts
 PM5HidDiag/bin/
 PM5HidDiag/obj/
+
+# Unreal Engine — generated, machine-local, never commit these
+UE5/Binaries/
+UE5/Intermediate/
+UE5/DerivedDataCache/
+UE5/Saved/AutoScreenshot.png
+UE5/Saved/Autosaves/
+UE5/Saved/Config/CrashReportClient/
+UE5/Saved/Config/WindowsEditor/
+UE5/Saved/ShaderDebugInfo/
+UE5/Saved/SourceControl/
+UE5/Saved/UnrealBuildTool/
 *.unityproj
 *.sln
 *.suo

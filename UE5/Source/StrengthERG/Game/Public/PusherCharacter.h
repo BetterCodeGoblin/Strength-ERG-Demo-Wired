@@ -55,22 +55,50 @@ public:
      * direction (negative = behind the boulder, toward path start).
      * Tune this so the character's hands contact the boulder surface.
      */
+    // ?? Positioning ???????????????????????????????????????????????????????????????????
+
+    /** How far behind the boulder centre the character stands (Unreal units). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Positioning")
-    float BoulderOffsetBehind = 120.f;
+    float StandOffsetBehind = 120.f;
 
     /**
-     * Vertical offset so the character stands on the ground plane rather than
-     * inside the boulder.
+     * Lifts the character perpendicular to the slope so feet sit on the surface.
+     * Equivalent to Unity's slopeHeightOffset. Tune to match terrain.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Positioning")
-    float VerticalOffset = 0.f;
+    float SlopeHeightOffset = 0.f;
 
     /**
-     * When true, the character's position is updated every frame to follow the
+     * When true, SlopeHeightOffset scales from 0 at path start to full at path end,
+     * matching terrain that steepens higher up. Port of Unity's rampOffsetAlongPath.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Positioning")
+    bool bRampOffsetAlongPath = true;
+
+    /** Smooth follow speed (higher = snappier). Port of Unity's followSmoothSpeed. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Positioning")
+    float FollowSmoothSpeed = 8.f;
+
+    /**
+     * When true, the character’s position is updated every frame to follow the
      * boulder along its path. Disable if you want to manage position manually.
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Positioning")
     bool bFollowBoulder = true;
+
+    // ?? Push Lunge ?????????????????????????????????????????????????????????????????
+
+    /** How far forward the character root lunges toward the boulder on each push (Unreal units). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lunge")
+    float LungeDistance = 30.f;
+
+    /** Lunge speed multiplier (higher = snappier). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lunge")
+    float LungeSpeed = 18.f;
+
+    /** Forward lean angle in degrees at peak lunge. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Lunge")
+    float LeanAngleDegrees = 22.f;
 
     // ?? Animation ?????????????????????????????????????????????????????????????
 
@@ -123,8 +151,10 @@ public:
     virtual void Tick(float DeltaTime) override;
 
 private:
-    bool bIsPushing = false;
+    bool bIsPushing  = false;
+    bool bIsLunging  = false;
+    float LungeT     = 0.f;
 
     /** Move the character to its offset position behind the boulder. */
-    void UpdatePositionAlongPath();
+    void UpdatePositionAlongPath(float DeltaTime);
 };

@@ -10,6 +10,11 @@
 #include "BoulderActor.h"
 #include "PusherCharacter.h"
 #include "ErgManagerComponent.h"
+#include "BoulderHUD.h"
+#include "GameFramework/Character.h"
+#include "Components/SkeletalMeshComponent.h"
+#include "Components/PrimitiveComponent.h"
+#include "Blueprint/UserWidget.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
 #include "TimerManager.h"
@@ -49,6 +54,44 @@ void ABoulderGameMode::BeginPlay()
     if (!Pusher)
     {
         UE_LOG(LogTemp, Warning, TEXT("[BoulderGame] No APusherCharacter found in level — place BP_PusherCharacter."));
+    }
+
+    // Auto-find AoiCharacter (BP_Aoi or any ACharacter) if not explicitly assigned.
+    // This handles the case where BP_Aoi does not inherit from APusherCharacter.
+    if (!AoiCharacter)
+    {
+        // First try to find by name containing "Aoi"
+        for (TActorIterator<ACharacter> It(GetWorld()); It; ++It)
+        {
+            if (It->GetName().Contains(TEXT("Aoi")) ||
+                It->GetClass()->GetName().Contains(TEXT("Aoi")))
+            {
+                AoiCharacter = *It;
+                UE_LOG(LogTemp, Log, TEXT("[BoulderGame] Auto-found Aoi character: %s"), *AoiCharacter->GetName());
+                break;
+            }
+        }
+    }
+    // Force Aoi visible — cover SkeletalMesh, Groom, and all other primitive components
+    if (AoiCharacter)
+    {
+        AoiCharacter->SetActorHiddenInGame(false);
+        AoiCharacter->SetActorEnableCollision(true);
+
+        TArray<UPrimitiveComponent*> Primitives;
+        AoiCharacter->GetComponents<UPrimitiveComponent>(Primitives);
+        for (UPrimitiveComponent* Prim : Primitives)
+        {
+            if (Prim)
+            {
+                Prim->SetHiddenInGame(false, true);
+                Prim->SetVisibility(true, true);
+            }
+        }
+
+        FVector AoiLoc = AoiCharacter->GetActorLocation();
+        UE_LOG(LogTemp, Log, TEXT("[BoulderGame] Aoi visibility enforced on %d primitive components. Location: X=%.1f Y=%.1f Z=%.1f"),
+               Primitives.Num(), AoiLoc.X, AoiLoc.Y, AoiLoc.Z);
     }
 
     // Find ErgManagerComponent on GameState or any actor
@@ -98,6 +141,25 @@ void ABoulderGameMode::BeginPlay()
     }
 
     ChangeState(EBoulderGameState::Idle);
+
+    // Create and add HUD widget
+    if (HUDWidgetClass)
+    {
+        APlayerController* PC = GetWorld()->GetFirstPlayerController();
+        if (PC)
+        {
+            HUDInstance = CreateWidget<UBoulderHUD>(PC, HUDWidgetClass);
+            if (HUDInstance)
+            {
+                HUDInstance->AddToViewport();
+                HUDInstance->ShowStartScreen();
+            }
+        }
+    }
+    else
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[BoulderGame] HUDWidgetClass not set — assign WBP_BoulderHUD in the GameMode defaults."));
+    }
 }
 
 void ABoulderGameMode::Tick(float DeltaTime)
@@ -137,7 +199,7 @@ void ABoulderGameMode::Tick(float DeltaTime)
     {
     case EBoulderGameState::Countdown:
         CountdownTimer -= DeltaTime;
-        // HUD updated via Blueprint binding on GetCountdownTimer()
+        if (HUDInstance) HUDInstance->UpdateCountdown(CountdownTimer);
         if (CountdownTimer <= 0.f)
         {
             TimeRemaining = TimeLimitSeconds;
@@ -165,6 +227,30 @@ void ABoulderGameMode::Tick(float DeltaTime)
 
     default:
         break;
+    }
+
+    // ── Camera Follow ─────────────────────────────────────────────────────────
+    if (bCameraFollowBoulder && GameCamera && Boulder)
+    {
+        FVector BoulderPos = Boulder->GetActorLocation();
+        FVector HillFwd    = Boulder->GetPathDirection();
+
+        // Position: behind and above the boulder
+        FVector DesiredPos = BoulderPos
+                           - HillFwd * CameraFollowDistance
+                           + FVector::UpVector * CameraFollowHeight;
+
+        // Look toward a point slightly above the boulder
+        FVector LookTarget = BoulderPos + FVector::UpVector * CameraLookAtHeightOffset;
+        FRotator DesiredRot = (LookTarget - DesiredPos).GetSafeNormal().Rotation();
+
+        FVector  CurrentPos = GameCamera->GetActorLocation();
+        FRotator CurrentRot = GameCamera->GetActorRotation();
+
+        GameCamera->SetActorLocation(
+            FMath::VInterpTo(CurrentPos, DesiredPos, DeltaTime, CameraFollowSpeed));
+        GameCamera->SetActorRotation(
+            FMath::RInterpTo(CurrentRot, DesiredRot, DeltaTime, CameraFollowSpeed));
     }
 }
 
@@ -255,8 +341,9 @@ void ABoulderGameMode::HandleNewRep(int32 RepNumber, float RepTimeSec, int32 Pul
     // 7. Drive pusher animation
     if (Pusher) Pusher->PlayPushAnimation();
 
-    // 8. NOTE: HUD feedback goes here.
-    //    Implement via UMG widget bound to GetCurrentZone(), GetCombo(), etc.
+    // 8. HUD feedback
+    if (HUDInstance)
+        HUDInstance->ShowPushFeedback(Rating, CurrentZone, RepPower, Combo);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -303,9 +390,8 @@ TTuple<EQTERating, float> ABoulderGameMode::EvaluatePush(float RepTimeSec)
 void ABoulderGameMode::ChangeState(EBoulderGameState Next)
 {
     State = Next;
-    // HUD panels are driven from UMG widgets that bind to GetState().
-    // Blueprint event hooks can also be added here if needed.
     UE_LOG(LogTemp, Log, TEXT("[BoulderGame] State -> %d"), (int32)State);
+    UpdateHUDForState(Next);
 }
 
 void ABoulderGameMode::EndGame(bool bWon)
@@ -314,14 +400,43 @@ void ABoulderGameMode::EndGame(bool bWon)
 
     if (Pusher) Pusher->StopPushAnimation();
 
+    float AvgPower = TotalReps > 0 ? TotalPowerAccum / (float)TotalReps : 0.f;
+    float Progress = Boulder ? Boulder->GetProgress() : 0.f;
+
     if (bWon)
     {
         ChangeState(EBoulderGameState::Won);
+        if (HUDInstance)
+            HUDInstance->ShowWinScreen(TotalReps, PerfectCount,
+                TimeLimitSeconds - TimeRemaining, AvgPower, PeakPower);
         OnGameWon.Broadcast();
     }
     else
     {
         ChangeState(EBoulderGameState::Lost);
+        if (HUDInstance)
+            HUDInstance->ShowLoseScreen(Progress, TotalReps, AvgPower, PeakPower);
         OnGameLost.Broadcast();
+    }
+}
+
+void ABoulderGameMode::UpdateHUDForState(EBoulderGameState NewState)
+{
+    if (!HUDInstance) return;
+
+    switch (NewState)
+    {
+    case EBoulderGameState::Idle:
+        HUDInstance->ShowStartScreen();
+        break;
+    case EBoulderGameState::Countdown:
+        HUDInstance->ShowCountdown();
+        break;
+    case EBoulderGameState::Playing:
+        HUDInstance->ShowGameplay();
+        break;
+    // Won / Lost screens are set in EndGame() with stats — nothing extra here.
+    default:
+        break;
     }
 }

@@ -23,6 +23,8 @@ class ABoulderActor;
 class APusherCharacter;
 class UErgManagerComponent;
 class ACameraActor;
+class UBoulderHUD;
+class ACharacter;
 
 // ── Delegates (replaces Unity's UnityEvent onGameWon / onGameLost) ────────────
 DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnGameWon);
@@ -49,9 +51,49 @@ public:
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
     APusherCharacter* Pusher = nullptr;
 
+    /**
+     * Direct reference to BP_Aoi (or any ACharacter) placed in the level.
+     * Use this if BP_Aoi does not inherit from APusherCharacter.
+     * When set, this actor is used for positioning and visibility instead of Pusher.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+    ACharacter* AoiCharacter = nullptr;
+
     /** Optional camera actor to activate on PIE start. Assign in editor. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
     ACameraActor* GameCamera = nullptr;
+
+    // ── Camera Follow ─────────────────────────────────────────────────────────
+
+    /** When true, GameCamera follows the boulder each tick. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    bool bCameraFollowBoulder = true;
+
+    /** Distance behind the boulder (opposite to path direction) in Unreal units. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float CameraFollowDistance = 2200.f;
+
+    /** Height above the boulder position. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float CameraFollowHeight = 1000.f;
+
+    /** Extra upward offset on the look-at target so the camera tilts down toward the scene. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float CameraLookAtHeightOffset = -200.f;
+
+    /** Smooth follow speed — higher is snappier. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Camera")
+    float CameraFollowSpeed = 4.f;
+
+    // ── HUD ───────────────────────────────────────────────────────────────────
+
+    /** Set to WBP_BoulderHUD (or any UBoulderHUD child Blueprint) in the editor. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD")
+    TSubclassOf<UBoulderHUD> HUDWidgetClass;
+
+    /** Created at BeginPlay; cached for direct C++ calls. */
+    UPROPERTY(BlueprintReadOnly, Category = "HUD")
+    TObjectPtr<UBoulderHUD> HUDInstance;
 
     // ── Game Rules ────────────────────────────────────────────────────────────
 
@@ -210,4 +252,7 @@ private:
     // ── ERG component ref ─────────────────────────────────────────────────────
 
     UErgManagerComponent* ErgComp = nullptr;
+
+    // Helper — calls the matching ShowXxx method if HUDInstance is valid.
+    void UpdateHUDForState(EBoulderGameState NewState);
 };

@@ -9,22 +9,56 @@
 #include "Animation/AnimMontage.h"
 #include "Components/CapsuleComponent.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "GameFramework/Character.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
+#include "DrawDebugHelpers.h"
 
-// Returns the first skeletal mesh component on this actor that has a live AnimInstance.
+// Returns the body skeletal mesh component that has a live AnimInstance.
+// Prefers the Character's main mesh (GetMesh), then falls back to the first
+// component whose name contains "body" (case-insensitive), and finally to any
+// component that has a live AnimInstance — so the Face mesh is never picked first.
 static USkeletalMeshComponent* FindAnimatedMesh(AActor* Actor)
 {
     TArray<USkeletalMeshComponent*> Meshes;
     Actor->GetComponents<USkeletalMeshComponent>(Meshes);
-    for (USkeletalMeshComponent* Mesh : Meshes)
+
+    // Log all meshes once to help diagnose which one to use
+    static bool bMeshesLogged = false;
+    if (!bMeshesLogged)
     {
-        if (Mesh && Mesh->GetAnimInstance())
-        {
-            return Mesh;
-        }
+        bMeshesLogged = true;
+        for (USkeletalMeshComponent* M : Meshes)
+            UE_LOG(LogTemp, Log, TEXT("[Pusher] Mesh found: %s | HasAnimInst: %d"),
+                   *M->GetName(), M->GetAnimInstance() != nullptr);
     }
+
+    // 1. Prefer the ACharacter root mesh if it has an AnimInstance
+    if (ACharacter* Char = Cast<ACharacter>(Actor))
+    {
+        USkeletalMeshComponent* Main = Char->GetMesh();
+        if (Main && Main->GetAnimInstance())
+            return Main;
+    }
+
+    // 2. Any mesh whose name contains "body" (case-insensitive)
+    for (USkeletalMeshComponent* Mesh : Meshes)
+        if (Mesh && Mesh->GetAnimInstance() &&
+            Mesh->GetName().ToLower().Contains(TEXT("body")))
+            return Mesh;
+
+    // 3. Any mesh that is NOT the face and has an AnimInstance
+    for (USkeletalMeshComponent* Mesh : Meshes)
+        if (Mesh && Mesh->GetAnimInstance() &&
+            !Mesh->GetName().ToLower().Contains(TEXT("face")))
+            return Mesh;
+
+    // 4. Any mesh with an AnimInstance — last resort
+    for (USkeletalMeshComponent* Mesh : Meshes)
+        if (Mesh && Mesh->GetAnimInstance())
+            return Mesh;
+
     return nullptr;
 }
 
@@ -45,6 +79,17 @@ void APusherCharacter::BeginPlay()
 {
     Super::BeginPlay();
 
+    // Ensure the character is actually visible — MetaHuman Blueprints sometimes
+    // have Actor Hidden In Game checked by default, or individual mesh components
+    // may be hidden. Force everything visible here.
+    SetActorHiddenInGame(false);
+    TArray<USceneComponent*> Components;
+    GetRootComponent()->GetChildrenComponents(true, Components);
+    for (USceneComponent* Comp : Components)
+    {
+        Comp->SetHiddenInGame(false, false);
+    }
+
     // Auto-find the boulder if not explicitly assigned in the editor.
     if (!Boulder)
     {
@@ -62,7 +107,7 @@ void APusherCharacter::BeginPlay()
     }
 
     // Snap to the correct starting position immediately.
-    UpdatePositionAlongPath();
+    UpdatePositionAlongPath(0.f);
 }
 
 void APusherCharacter::Tick(float DeltaTime)
@@ -71,7 +116,7 @@ void APusherCharacter::Tick(float DeltaTime)
 
     if (bFollowBoulder)
     {
-        UpdatePositionAlongPath();
+        UpdatePositionAlongPath(DeltaTime);
     }
 }
 
@@ -80,6 +125,13 @@ void APusherCharacter::Tick(float DeltaTime)
 void APusherCharacter::PlayPushAnimation()
 {
     bIsPushing = true;
+
+    // Trigger lunge only if one isn’t already running (avoids snap/jitter mid-lunge)
+    if (!bIsLunging)
+    {
+        LungeT     = 0.f;
+        bIsLunging = true;
+    }
 
     if (!PushMontage)
     {
@@ -121,46 +173,82 @@ void APusherCharacter::StopPushAnimation()
 
 // ?? Positioning ???????????????????????????????????????????????????????????????
 
-void APusherCharacter::UpdatePositionAlongPath()
+void APusherCharacter::UpdatePositionAlongPath(float DeltaTime)
 {
-    if (!Boulder)
+    if (!Boulder) return;
+
+    FVector BoulderPos = Boulder->GetActorLocation();
+
+    // Full 3D hill-forward direction (path start ? end), same as Unity's GetHillForward()
+    FVector HillFwd = Boulder->GetPathDirection();
+    if (HillFwd.IsNearlyZero()) return;
+
+    // Slope-perpendicular up vector: Cross(right, hillFwd)
+    // Equivalent to Unity's slopeUp = Vector3.Cross(hillRight, hillFwd)
+    FVector HillRight = FVector::CrossProduct(HillFwd, FVector::UpVector).GetSafeNormal();
+    FVector SlopeUp   = FVector::CrossProduct(HillRight, HillFwd).GetSafeNormal();
+
+    // Scale slope offset by boulder progress if ramping is enabled
+    float Progress        = Boulder->GetProgress();
+    float EffectiveOffset = bRampOffsetAlongPath
+                          ? SlopeHeightOffset * Progress
+                          : SlopeHeightOffset;
+
+    // Rest position: behind boulder along hill, lifted perpendicular to slope
+    FVector RestPos = BoulderPos
+                    - HillFwd * StandOffsetBehind
+                    + SlopeUp * EffectiveOffset;
+
+    // Script-driven lunge: sine pulse toward boulder on each push
+    if (bIsLunging)
     {
-        return;
+        LungeT += DeltaTime * LungeSpeed;
+        if (LungeT >= 1.f)
+        {
+            LungeT     = 0.f;
+            bIsLunging = false;
+        }
+    }
+    float T = bIsLunging ? FMath::Sin(LungeT * PI) : 0.f;
+
+    // Lunge forward along the FLAT (XY) push direction so Aoi doesn't float
+    // upward on a steep slope — same intent as Unity's hillFwd lunge but
+    // clamped to the ground plane.
+    FVector LungeDir = FVector(HillFwd.X, HillFwd.Y, 0.f).GetSafeNormal();
+    FVector Target   = RestPos + LungeDir * (T * LungeDistance);
+
+    // Smooth follow (Lerp), equivalent to Unity's Vector3.Lerp with followSmoothSpeed
+    FVector Current = GetActorLocation();
+    FVector NewPos  = FMath::Lerp(Current, Target,
+                                  FMath::Clamp(DeltaTime * FollowSmoothSpeed, 0.f, 1.f));
+
+    // On the initial snap (DeltaTime == 0) teleport directly to RestPos
+    if (DeltaTime <= 0.f) NewPos = RestPos;
+
+    SetActorLocation(NewPos, false, nullptr, ETeleportType::TeleportPhysics);
+
+    // Face directly toward the boulder (look-at), not just along HillFwd.
+    // This works regardless of MetaHuman mesh orientation offsets.
+    FVector ToBoulder = (BoulderPos - NewPos);
+    ToBoulder.Z = 0.f;   // keep rotation on the horizontal plane — no tilt up
+    if (!ToBoulder.IsNearlyZero())
+    {
+        FRotator LookAt = ToBoulder.GetSafeNormal().Rotation();
+        FRotator Lean   = FRotator(0.f, 0.f, 0.f); // reserved for future lean
+        FRotator TargetRot = LookAt + Lean;
+        SetActorRotation(DeltaTime > 0.f
+            ? FMath::RInterpTo(GetActorRotation(), TargetRot, DeltaTime, 10.f)
+            : TargetRot);
     }
 
-    // Compute the push direction (path start ? path end) from the boulder's
-    // current world location. We ask the boulder for its location directly
-    // since PathStart/PathEnd are private — the character just needs to stand
-    // behind the boulder in the opposite direction of travel.
-    FVector BoulderPos    = Boulder->GetActorLocation();
-
-    // We reconstruct the push direction from the boulder's forward vector.
-    // ABoulderActor aligns its rolling axis to the hill, so the path direction
-    // is recoverable from its world-space forward (X axis after rolling).
-    // However, to keep this robust and independent of mesh orientation, we use
-    // the GameMode's stored path vectors via a BlueprintCallable getter if
-    // available. For now we derive it from the marker actors if accessible,
-    // falling back to -Boulder forward.
-    //
-    // The simplest robust approach: use the boulder's velocity direction.
-    // Since the boulder teleports via ETeleportPhysics we can't rely on velocity.
-    // Instead we store the last known push direction between frames.
-    //
-    // Practical solution: expose PathDirection as a BlueprintCallable on
-    // ABoulderActor (added separately) and call it here.
-    FVector PushDir = Boulder->GetPathDirection(); // see BoulderActor addition below
-
-    // Stand behind the boulder: offset in the -PushDir direction.
-    FVector TargetPos = BoulderPos
-                      - PushDir * BoulderOffsetBehind
-                      + FVector(0.f, 0.f, VerticalOffset);
-
-    SetActorLocation(TargetPos, false, nullptr, ETeleportType::TeleportPhysics);
-
-    // Face the boulder (i.e. face in the PushDir direction).
-    if (!PushDir.IsNearlyZero())
+    // Log once for debugging
+    static bool bLogged = false;
+    if (!bLogged)
     {
-        FRotator FaceRot = PushDir.Rotation();
-        SetActorRotation(FaceRot);
+        bLogged = true;
+        UE_LOG(LogTemp, Log, TEXT("[Pusher] First position: X=%.1f Y=%.1f Z=%.1f | RestPos: X=%.1f Y=%.1f Z=%.1f | SlopeOffset=%.1f"),
+               NewPos.X, NewPos.Y, NewPos.Z,
+               RestPos.X, RestPos.Y, RestPos.Z, EffectiveOffset);
     }
 }
+

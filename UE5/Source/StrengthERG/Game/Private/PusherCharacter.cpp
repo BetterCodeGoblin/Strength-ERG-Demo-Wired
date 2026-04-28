@@ -8,9 +8,25 @@
 #include "Animation/AnimInstance.h"
 #include "Animation/AnimMontage.h"
 #include "Components/CapsuleComponent.h"
+#include "Components/SkeletalMeshComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
+
+// Returns the first skeletal mesh component on this actor that has a live AnimInstance.
+static USkeletalMeshComponent* FindAnimatedMesh(AActor* Actor)
+{
+    TArray<USkeletalMeshComponent*> Meshes;
+    Actor->GetComponents<USkeletalMeshComponent>(Meshes);
+    for (USkeletalMeshComponent* Mesh : Meshes)
+    {
+        if (Mesh && Mesh->GetAnimInstance())
+        {
+            return Mesh;
+        }
+    }
+    return nullptr;
+}
 
 APusherCharacter::APusherCharacter()
 {
@@ -65,21 +81,21 @@ void APusherCharacter::PlayPushAnimation()
 {
     bIsPushing = true;
 
-    UAnimInstance* AnimInst = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
-    if (!AnimInst)
-    {
-        UE_LOG(LogTemp, Warning, TEXT("[Pusher] No AnimInstance on mesh — assign an Animation Blueprint."));
-        return;
-    }
-
     if (!PushMontage)
     {
         UE_LOG(LogTemp, Warning, TEXT("[Pusher] PushMontage is null — assign a montage in the Blueprint details."));
         return;
     }
 
-    float Duration = AnimInst->Montage_Play(PushMontage, MontagePlayRate);
-    UE_LOG(LogTemp, Log, TEXT("[Pusher] Push montage started (rate=%.2f, duration=%.2f)."), MontagePlayRate, Duration);
+    USkeletalMeshComponent* AnimMesh = FindAnimatedMesh(this);
+    if (!AnimMesh)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Pusher] No skeletal mesh with an AnimInstance found on %s."), *GetName());
+        return;
+    }
+
+    float Duration = AnimMesh->GetAnimInstance()->Montage_Play(PushMontage, MontagePlayRate);
+    UE_LOG(LogTemp, Log, TEXT("[Pusher] Push montage started on %s (rate=%.2f, duration=%.2f)."), *AnimMesh->GetName(), MontagePlayRate, Duration);
 }
 
 void APusherCharacter::StopPushAnimation()
@@ -91,11 +107,13 @@ void APusherCharacter::StopPushAnimation()
 
     bIsPushing = false;
 
-    UAnimInstance* AnimInst = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
-    if (AnimInst && PushMontage)
+    if (PushMontage)
     {
-        // Blend out over 0.25 s so the transition to idle is not a hard cut.
-        AnimInst->Montage_Stop(0.25f, PushMontage);
+        USkeletalMeshComponent* AnimMesh = FindAnimatedMesh(this);
+        if (AnimMesh)
+        {
+            AnimMesh->GetAnimInstance()->Montage_Stop(0.25f, PushMontage);
+        }
     }
 
     UE_LOG(LogTemp, Log, TEXT("[Pusher] Push montage stopped."));

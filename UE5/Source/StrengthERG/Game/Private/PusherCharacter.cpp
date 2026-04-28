@@ -63,12 +63,6 @@ void APusherCharacter::Tick(float DeltaTime)
 
 void APusherCharacter::PlayPushAnimation()
 {
-    if (bIsPushing)
-    {
-        // Already playing — don't restart from the top on every single rep.
-        return;
-    }
-
     bIsPushing = true;
 
     UAnimInstance* AnimInst = GetMesh() ? GetMesh()->GetAnimInstance() : nullptr;
@@ -85,15 +79,7 @@ void APusherCharacter::PlayPushAnimation()
     }
 
     float Duration = AnimInst->Montage_Play(PushMontage, MontagePlayRate);
-
-    // If a loop section is specified, jump to it so the animation loops
-    // continuously while the athlete keeps pushing.
-    if (PushLoopSectionName != NAME_None && Duration > 0.f)
-    {
-        AnimInst->Montage_JumpToSection(PushLoopSectionName, PushMontage);
-    }
-
-    UE_LOG(LogTemp, Log, TEXT("[Pusher] Push montage started (rate=%.2f)."), MontagePlayRate);
+    UE_LOG(LogTemp, Log, TEXT("[Pusher] Push montage started (rate=%.2f, duration=%.2f)."), MontagePlayRate, Duration);
 }
 
 void APusherCharacter::StopPushAnimation()

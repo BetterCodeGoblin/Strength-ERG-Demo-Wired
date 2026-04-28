@@ -1,8 +1,11 @@
 // PM5HidDiag — Minimal Concept2 PM5 USB HID diagnostic tool
-// Sends CSAFE commands over USB HID and parses real PM5 responses.
+// PM5 Strength Bridge — polls Concept2 PM5 over USB HID and streams data to Unreal via TCP.
 // Frame: [ REPORT_ID, CSAFE_START, ...commands, XOR-checksum, CSAFE_STOP ] padded to maxOut.
-// Mirrors Unity Concept2UsbReader.cs SendFrame/ExtractPublicCmdData/ExtractProprietaryData.
+// TCP payload format (newline-delimited): repCount,repTimeSec,pullDistance,connected
 
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
 using HidSharp;
 
 const int  PM5_VID      = 0x17A4;
@@ -15,9 +18,9 @@ const byte STROKESTATS  = 0x6E;
 const byte CMD_GETTWORK = 0xA0;
 const byte CMD_GETHRCUR = 0xB0;
 
-const int POLL_CYCLES    = 20;   // cycles before exit (0 = infinite)
-const int INTER_CMD_MS   = 60;   // gap between commands (matches Unity)
-const int INTER_CYCLE_MS = 200;  // gap between full cycles
+const int TCP_PORT       = 6789; // Unreal connects here
+const int INTER_CMD_MS   = 60;   // gap between CSAFE commands (matches Unity)
+const int INTER_CYCLE_MS = 200;  // gap between full poll cycles
 const int READ_TIMEOUT   = 2000;
 const int WRITE_TIMEOUT  = 2000;
 
@@ -76,71 +79,100 @@ int maxIn  = pm5.GetMaxInputReportLength();
 Console.WriteLine($"  Report sizes — OUT: {maxOut}  IN: {maxIn}");
 Console.WriteLine();
 
-Console.WriteLine($"[STAGE 4] CSAFE poll loop — {(POLL_CYCLES == 0 ? "infinite" : POLL_CYCLES)} cycle(s), Ctrl+C to stop");
-Console.WriteLine("          Start a workout on the PM5 to see non-zero values.");
+Console.WriteLine($"[STAGE 4] Starting TCP bridge on 127.0.0.1:{TCP_PORT}...");
+Console.WriteLine("          Waiting for Unreal to connect. Start a workout on the PM5.");
+Console.WriteLine();
+
+var listener = new TcpListener(IPAddress.Loopback, TCP_PORT);
+listener.Start();
+Console.WriteLine($"  [TCP] Listening on 127.0.0.1:{TCP_PORT}");
 Console.WriteLine();
 
 using (stream)
 {
-    int cycle = 0;
-    while (POLL_CYCLES == 0 || cycle < POLL_CYCLES)
+    while (true)
     {
-        Console.WriteLine($"-- Cycle {cycle + 1} --------------------------------------------------");
+        // Wait for Unreal (or any TCP client) to connect
+        Console.WriteLine("  [TCP] Waiting for client...");
+        using TcpClient client = listener.AcceptTcpClient();
+        Console.WriteLine($"  [TCP] Client connected: {client.Client.RemoteEndPoint}");
 
-        // Poll STROKESTATS (rep count, drive time, pull distance)
-        byte[]? ssResp = SendFrame(stream, maxOut, maxIn,
-            new byte[] { WRAPPER_CMD, 0x02, STROKESTATS, 0x00 }, "STROKESTATS");
-        if (ssResp != null)
+        var writer = new StreamWriter(client.GetStream(), new UTF8Encoding(false))
         {
-            byte[]? data = ExtractProprietaryData(ssResp, STROKESTATS);
-            if (data != null && data.Length >= 7)
+            AutoFlush = true,
+            NewLine   = "\n"
+        };
+
+        // Poll PM5 and stream to client until it disconnects
+        while (client.Connected)
+        {
+            int   repCount     = 0;
+            float driveTimeSec = 0f;
+            int   pullDist     = 0;
+            bool  pm5Ok        = false;
+
+            // Poll STROKESTATS
+            byte[]? ssResp = SendFrame(stream, maxOut, maxIn,
+                new byte[] { WRAPPER_CMD, 0x02, STROKESTATS, 0x00 }, "STROKESTATS");
+            if (ssResp != null)
             {
-                float driveTimeSec = data[2] * 0.01f;
-                int   pullDist     = data[5];
-                int   repCount     = data[6];
-                Console.WriteLine($"  -> RepCount={repCount}  DriveTime={driveTimeSec:F2}s  PullDist={pullDist}");
+                byte[]? data = ExtractProprietaryData(ssResp, STROKESTATS);
+                if (data != null && data.Length >= 7)
+                {
+                    driveTimeSec = data[2] * 0.01f;
+                    pullDist     = data[5];
+                    repCount     = data[6];
+                    pm5Ok        = true;
+                    Console.WriteLine($"  -> RepCount={repCount}  DriveTime={driveTimeSec:F2}s  PullDist={pullDist}");
+                }
+                else Console.WriteLine("  -> STROKESTATS: no data");
             }
-            else Console.WriteLine("  -> STROKESTATS: no data (start a workout on the PM5)");
-        }
 
-        Thread.Sleep(INTER_CMD_MS);
+            Thread.Sleep(INTER_CMD_MS);
 
-        // Poll GETTWORK (elapsed time)
-        byte[]? wtResp = SendFrame(stream, maxOut, maxIn,
-            new byte[] { CMD_GETTWORK }, "GETTWORK");
-        if (wtResp != null)
-        {
-            byte[]? data = ExtractPublicCmdData(wtResp, CMD_GETTWORK);
-            if (data != null && data.Length >= 3)
+            // Poll GETTWORK (logged only, not in payload yet)
+            byte[]? wtResp = SendFrame(stream, maxOut, maxIn,
+                new byte[] { CMD_GETTWORK }, "GETTWORK");
+            if (wtResp != null)
             {
-                float elapsed = data[0] * 3600f + data[1] * 60f + data[2];
-                Console.WriteLine($"  -> Elapsed={elapsed:F0}s  ({data[0]}h {data[1]}m {data[2]}s)");
+                byte[]? data = ExtractPublicCmdData(wtResp, CMD_GETTWORK);
+                if (data != null && data.Length >= 3)
+                    Console.WriteLine($"  -> Elapsed={data[0] * 3600f + data[1] * 60f + data[2]:F0}s");
             }
-            else Console.WriteLine("  -> GETTWORK: no data");
-        }
 
-        Thread.Sleep(INTER_CMD_MS);
+            Thread.Sleep(INTER_CMD_MS);
 
-        // Poll GETHRCUR (heart rate)
-        byte[]? hrResp = SendFrame(stream, maxOut, maxIn,
-            new byte[] { CMD_GETHRCUR }, "GETHRCUR");
-        if (hrResp != null)
-        {
-            byte[]? data = ExtractPublicCmdData(hrResp, CMD_GETHRCUR);
-            if (data != null && data.Length >= 1)
-                Console.WriteLine($"  -> HeartRate={data[0]} BPM");
-            else
-                Console.WriteLine("  -> GETHRCUR: no data (HR belt required)");
-        }
+            // Poll GETHRCUR (logged only, not in payload yet)
+            byte[]? hrResp = SendFrame(stream, maxOut, maxIn,
+                new byte[] { CMD_GETHRCUR }, "GETHRCUR");
+            if (hrResp != null)
+            {
+                byte[]? data = ExtractPublicCmdData(hrResp, CMD_GETHRCUR);
+                if (data != null && data.Length >= 1)
+                    Console.WriteLine($"  -> HeartRate={data[0]} BPM");
+            }
 
-        Console.WriteLine();
-        cycle++;
-        if (POLL_CYCLES == 0 || cycle < POLL_CYCLES)
+            // Send strength payload line to Unreal
+            // Format: repCount,repTimeSec,pullDistance,connected
+            string line = $"{repCount},{driveTimeSec:F2},{pullDist},{(pm5Ok ? 1 : 0)}";
+            try
+            {
+                writer.WriteLine(line);
+                Console.WriteLine($"  [TCP >>] {line}");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  [TCP] Send failed: {ex.Message}");
+                break;
+            }
+
             Thread.Sleep(INTER_CYCLE_MS);
+        }
+
+        Console.WriteLine("  [TCP] Client disconnected — waiting for next connection.");
+        Console.WriteLine();
     }
 }
-
-Console.WriteLine("=== Done ===");
 
 // ?? Helpers ??????????????????????????????????????????????????????????????
 

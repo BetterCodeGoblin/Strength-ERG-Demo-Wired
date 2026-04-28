@@ -131,17 +131,39 @@ uint32 FErgReaderThread::Run()
 
 void FErgReaderThread::ParseCsvLine(const FString& Line)
 {
-    // Format: "rate,pace,power,connected\r\n"
+    // Supported strength bridge format:
+    //   repCount,repTimeSec,pullDistance,connected
+    // Legacy fallback format:
+    //   rate,pace,power,connected
     TArray<FString> Parts;
     Line.ParseIntoArray(Parts, TEXT(","), true);
     if (Parts.Num() < 4) return;
 
+    const bool bConnected = (Parts[3].TrimStartAndEnd() == TEXT("1"));
+
     FErgData D;
-    D.RepTimeSec   = FCString::Atof(*Parts[0]);  // stroke rate mapped as pace in bridge
+    D.bIsConnected = bConnected;
+    D.StatusText   = bConnected ? TEXT("Connected") : TEXT("ERG not connected");
+
+    const int32 FirstInt = FCString::Atoi(*Parts[0]);
+    const bool bLooksLikeStrengthRepFrame = FirstInt > 0 && Parts[0].Find(TEXT(".")) == INDEX_NONE;
+
+    if (bLooksLikeStrengthRepFrame)
+    {
+        D.RepCount     = FirstInt;
+        D.RepTimeSec   = FCString::Atof(*Parts[1]);
+        D.PullDistance = FCString::Atoi(*Parts[2]);
+        D.bIsActive    = D.RepCount > 0;
+
+        OwnerComp->ThreadSafe_UpdateData(D);
+        OwnerComp->ThreadSafe_EnqueueRep(D.RepCount, D.RepTimeSec, D.PullDistance);
+        return;
+    }
+
+    // Rowing/legacy telemetry fallback
+    D.RepTimeSec     = FCString::Atof(*Parts[0]);
     D.ElapsedSeconds = FCString::Atof(*Parts[1]);
-    D.PullDistance = (int32)FCString::Atof(*Parts[2]);
-    D.bIsConnected = (Parts[3].TrimStartAndEnd() == TEXT("1"));
-    D.StatusText   = D.bIsConnected ? TEXT("Connected") : TEXT("ERG not connected");
+    D.PullDistance   = (int32)FCString::Atof(*Parts[2]);
 
     OwnerComp->ThreadSafe_UpdateData(D);
 }
@@ -293,6 +315,22 @@ void UErgManagerComponent::TickComponent(float DeltaTime, ELevelTick TickType,
         {
             LastRepCount = Rep.RepNumber;
             OnNewRep.Broadcast(Rep.RepNumber, Rep.RepTimeSec, Rep.PullDistance);
+        }
+    }
+
+    // CSV strength bridge may update RepCount without queue timing if a frame lands before first enqueue.
+    if (LatestData.RepCount > 0)
+    {
+        if (!bCsvRepCountSeen)
+        {
+            bCsvRepCountSeen = true;
+            LastRepCount = FMath::Max(LastRepCount, LatestData.RepCount - 1);
+        }
+
+        if (LatestData.RepCount > LastRepCount)
+        {
+            LastRepCount = LatestData.RepCount;
+            OnNewRep.Broadcast(LatestData.RepCount, LatestData.RepTimeSec, LatestData.PullDistance);
         }
     }
 

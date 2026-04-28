@@ -165,6 +165,7 @@ private:
 
     FErgData LatestData;
     int32    LastRepCount = -1;
+    bool     bCsvRepCountSeen = false;
 
     // ── Bridge process ──────────────────────────────────────────────────────
 

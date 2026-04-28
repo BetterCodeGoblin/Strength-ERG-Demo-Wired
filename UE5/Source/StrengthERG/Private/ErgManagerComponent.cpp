@@ -30,8 +30,8 @@ uint32 FErgReaderThread::Run()
     ISocketSubsystem* SS = ISocketSubsystem::Get(PLATFORM_SOCKETSUBSYSTEM);
     if (!SS) return 1;
 
-    // Brief startup delay so ErgBridge has time to bind its port
-    FPlatformProcess::Sleep(2.5f);
+    // Match Unity ErgBridgeClient: 5s startup delay so ErgBridge has time to bind its port
+    FPlatformProcess::Sleep(5.0f);
 
     while (bRunning && OwnerComp->bReading)
     {
@@ -75,16 +75,20 @@ uint32 FErgReaderThread::Run()
 
         while (bRunning && OwnerComp->bReading)
         {
+            // ErgBridge uses a request/response protocol — send 0x01 to request a data line,
+            // matching the Unity ErgBridgeClient behaviour
+            uint8 RequestByte = 0x01;
+            int32 BytesSent = 0;
+            if (!Sock->Send(&RequestByte, 1, BytesSent) || BytesSent == 0)
+                break;
+
+            // Block-read the response — bridge sends one CSV line per request
+            // Match Unity's Thread.Sleep(100) = 10 Hz poll rate
             int32 BytesRead = 0;
-
-            if (!Sock->HasPendingData((uint32&)BytesRead))
-            {
-                FPlatformProcess::Sleep(0.05f);  // 20 Hz poll max
-                continue;
-            }
-
             if (!Sock->Recv(Buffer.GetData(), Buffer.Num(), BytesRead) || BytesRead == 0)
                 break;
+
+            FPlatformProcess::Sleep(0.1f); // 10 Hz, matching Unity client
 
             // Append received bytes to line buffer, split on newline
             FString Chunk = FString(BytesRead, UTF8_TO_TCHAR(
@@ -342,8 +346,30 @@ void UErgManagerComponent::ThreadSafe_EnqueueRep(int32 Num, float Time, int32 Di
 
 void UErgManagerComponent::LaunchBridgeProcess()
 {
-    FString FullPath = FPaths::ConvertRelativePathToFull(
-        FPaths::ProjectDir() / BridgeExePath);
+    FString FullPath;
+
+    if (FPaths::IsRelative(BridgeExePath))
+    {
+        // Get absolute project directory
+        FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
+
+        // Combine with bridge exe path using concatenation
+        // NOTE: do not use the / operator here — ProjectDir already ends with /
+        // and the / operator will strip the leading / from ../ causing path corruption
+        FullPath = ProjectDir + BridgeExePath;
+
+        // Normalize slashes
+        FPaths::NormalizeFilename(FullPath);
+
+        // Collapse ../ and ./ markers
+        FPaths::CollapseRelativeDirectories(FullPath);
+    }
+    else
+    {
+        // Already absolute, just normalize
+        FullPath = BridgeExePath;
+        FPaths::NormalizeFilename(FullPath);
+    }
 
     if (!FPaths::FileExists(FullPath))
     {
@@ -355,8 +381,8 @@ void UErgManagerComponent::LaunchBridgeProcess()
         *FullPath,          // exe
         TEXT(""),           // args
         true,               // bLaunchDetached
-        true,               // bLaunchHidden
-        true,               // bLaunchReallyHidden
+        false,              // bLaunchHidden — visible so we can see crash output
+        false,              // bLaunchReallyHidden
         nullptr,            // out PID
         0,                  // priority
         nullptr,            // opt dir

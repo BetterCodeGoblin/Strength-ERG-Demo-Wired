@@ -27,7 +27,10 @@ crashlytics-build.properties
 # Visual Studio / Rider
 .vs/
 .idea/
-*.csproj
+
+# .NET build artifacts
+PM5HidDiag/bin/
+PM5HidDiag/obj/
 *.unityproj
 *.sln
 *.suo

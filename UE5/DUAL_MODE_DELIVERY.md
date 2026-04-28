@@ -1,5 +1,8 @@
 # Unreal Dual-Mode Delivery Plan
 
+> Update: Use `UE5_EDITOR_NEXT_STEPS.md` as the primary execution checklist for the next 19 hours.
+> This document remains useful for background context.
+
 ## Target
 By tomorrow at 11 AM, both demos live in the same Unreal project:
 - Strength mode

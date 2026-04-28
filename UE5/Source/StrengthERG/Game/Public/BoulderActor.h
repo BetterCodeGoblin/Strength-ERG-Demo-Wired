@@ -101,6 +101,11 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Boulder")
     bool IsAtBottom() const { return Progress <= 0.001f; }
 
+    /** Returns the normalised direction from path start to path end.
+     *  Used by APusherCharacter to position itself behind the boulder. */
+    UFUNCTION(BlueprintCallable, Category = "Boulder")
+    FVector GetPathDirection() const { return (PathEnd - PathStart).GetSafeNormal(); }
+
     // ── API ───────────────────────────────────────────────────────────────────
 
     /** Called by the game mode for every valid rep. */

@@ -20,6 +20,7 @@
 #include "BoulderGameMode.generated.h"
 
 class ABoulderActor;
+class APusherCharacter;
 class UErgManagerComponent;
 class ACameraActor;
 
@@ -40,6 +41,13 @@ public:
     /** The boulder actor in the level. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
     ABoulderActor* Boulder = nullptr;
+
+    /**
+     * The MetaHuman pusher character in the level.
+     * If null, BeginPlay will auto-find the first APusherCharacter.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")
+    APusherCharacter* Pusher = nullptr;
 
     /** Optional camera actor to activate on PIE start. Assign in editor. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Scene")

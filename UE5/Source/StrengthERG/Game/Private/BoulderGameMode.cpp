@@ -8,6 +8,7 @@
 
 #include "BoulderGameMode.h"
 #include "BoulderActor.h"
+#include "PusherCharacter.h"
 #include "ErgManagerComponent.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
@@ -32,6 +33,21 @@ void ABoulderGameMode::BeginPlay()
             Boulder = *It;
             break;
         }
+    }
+
+    // Auto-find pusher character if not explicitly assigned
+    if (!Pusher)
+    {
+        for (TActorIterator<APusherCharacter> It(GetWorld()); It; ++It)
+        {
+            Pusher = *It;
+            UE_LOG(LogTemp, Log, TEXT("[BoulderGame] Auto-found pusher: %s"), *Pusher->GetName());
+            break;
+        }
+    }
+    if (!Pusher)
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[BoulderGame] No APusherCharacter found in level — place BP_PusherCharacter."));
     }
 
     // Find ErgManagerComponent on GameState or any actor
@@ -134,7 +150,10 @@ void ABoulderGameMode::Tick(float DeltaTime)
 
         // Rollback when idle too long
         if (TimeSinceLastRep > RollbackDelaySec && Boulder)
+        {
             Boulder->ApplyRollback(DeltaTime);
+            if (Pusher) Pusher->StopPushAnimation();
+        }
 
         // Win/Lose checks
         if (Boulder && Boulder->IsAtTop())
@@ -232,9 +251,8 @@ void ABoulderGameMode::HandleNewRep(int32 RepNumber, float RepTimeSec, int32 Pul
     // 6. Push boulder
     if (Boulder) Boulder->Push(RepPower, Combined);
 
-    // 7. NOTE: Pusher animation trigger goes here.
-    //    In UE5, find APusherCharacter and call TriggerPushAnim(RepTimeSec).
-    //    Left as a Blueprint event for designers to wire in the specific pawn.
+    // 7. Drive pusher animation
+    if (Pusher) Pusher->PlayPushAnimation();
 
     // 8. NOTE: HUD feedback goes here.
     //    Implement via UMG widget bound to GetCurrentZone(), GetCombo(), etc.
@@ -292,6 +310,8 @@ void ABoulderGameMode::ChangeState(EBoulderGameState Next)
 void ABoulderGameMode::EndGame(bool bWon)
 {
     if (State != EBoulderGameState::Playing) return;
+
+    if (Pusher) Pusher->StopPushAnimation();
 
     if (bWon)
     {

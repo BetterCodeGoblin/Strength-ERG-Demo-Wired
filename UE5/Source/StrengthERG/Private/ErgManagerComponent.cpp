@@ -75,20 +75,23 @@ uint32 FErgReaderThread::Run()
 
         while (bRunning && OwnerComp->bReading)
         {
-            // ErgBridge uses a request/response protocol — send 0x01 to request a data line,
-            // matching the Unity ErgBridgeClient behaviour
-            uint8 RequestByte = 0x01;
-            int32 BytesSent = 0;
-            if (!Sock->Send(&RequestByte, 1, BytesSent) || BytesSent == 0)
+            // PM5HidDiag streams CSV lines continuously — no request byte needed.
+            // Wait up to 1 second for data to arrive, then read whatever is in
+            // the buffer.  This avoids false disconnects on a non-blocking socket
+            // when the bridge hasn't sent a line yet.
+            const bool bDataReady = Sock->Wait(
+                ESocketWaitConditions::WaitForRead,
+                FTimespan::FromSeconds(1.0));
+
+            if (!bRunning || !OwnerComp->bReading)
                 break;
 
-            // Block-read the response — bridge sends one CSV line per request
-            // Match Unity's Thread.Sleep(100) = 10 Hz poll rate
+            if (!bDataReady)
+                continue;  // 1-second timeout with no data — loop and wait again
+
             int32 BytesRead = 0;
             if (!Sock->Recv(Buffer.GetData(), Buffer.Num(), BytesRead) || BytesRead == 0)
-                break;
-
-            FPlatformProcess::Sleep(0.1f); // 10 Hz, matching Unity client
+                break;  // genuine disconnect
 
             // Append received bytes to line buffer, split on newline
             FString Chunk = FString(BytesRead, UTF8_TO_TCHAR(

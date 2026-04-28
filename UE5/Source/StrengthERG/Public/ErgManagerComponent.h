@@ -89,9 +89,9 @@ public:
 
     // ── Inspector / Config ──────────────────────────────────────────────────
 
-    /** Path to ErgBridge.exe, relative to project root (or absolute). */
+    /** Path to PM5HidDiag.exe, relative to UE project root (or absolute). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
-    FString BridgeExePath = TEXT("ErgBridge/ErgBridge.exe");
+    FString BridgeExePath = TEXT("../PM5HidDiag/bin/Release/net8.0-windows/PM5HidDiag.exe");
 
     /** Port ErgBridge listens on (wired USB: 6789, BLE: 6790). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")

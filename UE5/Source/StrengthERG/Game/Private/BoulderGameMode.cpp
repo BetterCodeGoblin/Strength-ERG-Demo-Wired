@@ -14,6 +14,7 @@
 #include "GameFramework/Character.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "Components/PrimitiveComponent.h"
+#include "Components/ShapeComponent.h"
 #include "Blueprint/UserWidget.h"
 #include "EngineUtils.h"
 #include "Engine/World.h"
@@ -72,7 +73,9 @@ void ABoulderGameMode::BeginPlay()
             }
         }
     }
-    // Force Aoi visible — cover SkeletalMesh, Groom, and all other primitive components
+    // Force Aoi visible — only show rendering components (SkeletalMesh, StaticMesh, Groom).
+    // Deliberately skip UShapeComponent subclasses (box/capsule/sphere) to avoid
+    // debug cage meshes appearing in-game.
     if (AoiCharacter)
     {
         AoiCharacter->SetActorHiddenInGame(false);
@@ -80,25 +83,32 @@ void ABoulderGameMode::BeginPlay()
 
         TArray<UPrimitiveComponent*> Primitives;
         AoiCharacter->GetComponents<UPrimitiveComponent>(Primitives);
+        int32 ShownCount = 0;
         for (UPrimitiveComponent* Prim : Primitives)
         {
-            if (Prim)
-            {
-                Prim->SetHiddenInGame(false, true);
-                Prim->SetVisibility(true, true);
-            }
+            if (!Prim) continue;
+            // Skip collision shapes — they show as visible cages if forced on
+            if (Prim->IsA<UShapeComponent>()) continue;
+            Prim->SetHiddenInGame(false, true);
+            Prim->SetVisibility(true, true);
+            ++ShownCount;
         }
 
         FVector AoiLoc = AoiCharacter->GetActorLocation();
-        UE_LOG(LogTemp, Log, TEXT("[BoulderGame] Aoi visibility enforced on %d primitive components. Location: X=%.1f Y=%.1f Z=%.1f"),
-               Primitives.Num(), AoiLoc.X, AoiLoc.Y, AoiLoc.Z);
+        UE_LOG(LogTemp, Log, TEXT("[BoulderGame] Aoi visibility enforced on %d mesh components. Location: X=%.1f Y=%.1f Z=%.1f"),
+               ShownCount, AoiLoc.X, AoiLoc.Y, AoiLoc.Z);
     }
 
-    // Find ErgManagerComponent on GameState or any actor
-    for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+    // Find ErgManagerComponent — check the GameMode itself first (set in BP),
+    // then fall back to any actor in the level.
+    ErgComp = FindComponentByClass<UErgManagerComponent>();
+    if (!ErgComp)
     {
-        ErgComp = It->FindComponentByClass<UErgManagerComponent>();
-        if (ErgComp) break;
+        for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+        {
+            ErgComp = It->FindComponentByClass<UErgManagerComponent>();
+            if (ErgComp) break;
+        }
     }
 
     if (ErgComp)
@@ -108,7 +118,7 @@ void ABoulderGameMode::BeginPlay()
     }
     else
     {
-        UE_LOG(LogTemp, Warning, TEXT("[BoulderGame] UErgManagerComponent not found — enable SimulateInput for testing."));
+        UE_LOG(LogTemp, Warning, TEXT("[BoulderGame] UErgManagerComponent not found — add it to BP_BoulderGameMode."));
     }
 
     if (bSimulateInput)
@@ -148,11 +158,18 @@ void ABoulderGameMode::BeginPlay()
         APlayerController* PC = GetWorld()->GetFirstPlayerController();
         if (PC)
         {
-            HUDInstance = CreateWidget<UBoulderHUD>(PC, HUDWidgetClass);
+            UUserWidget* Widget = CreateWidget<UUserWidget>(PC, HUDWidgetClass);
+            HUDInstance = Cast<UBoulderHUD>(Widget);
             if (HUDInstance)
             {
                 HUDInstance->AddToViewport();
                 HUDInstance->ShowStartScreen();
+            }
+            else if (Widget)
+            {
+                // Widget was created but is not a UBoulderHUD — wrong parent class
+                UE_LOG(LogTemp, Warning, TEXT("[BoulderGame] WBP_BoulderHUD parent class is not UBoulderHUD — reparent it in the editor."));
+                Widget->AddToViewport(); // still show it so the screen isn't blank
             }
         }
     }

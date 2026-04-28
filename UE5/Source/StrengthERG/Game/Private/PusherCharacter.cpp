@@ -139,10 +139,15 @@ void APusherCharacter::PlayPushAnimation()
         return;
     }
 
-    USkeletalMeshComponent* AnimMesh = FindAnimatedMesh(this);
+    USkeletalMeshComponent* AnimMesh = AnimBodyMesh ? AnimBodyMesh : FindAnimatedMesh(this);
     if (!AnimMesh)
     {
-        UE_LOG(LogTemp, Warning, TEXT("[Pusher] No skeletal mesh with an AnimInstance found on %s."), *GetName());
+        UE_LOG(LogTemp, Warning, TEXT("[Pusher] No skeletal mesh with an AnimInstance found on %s. Assign AnimBodyMesh in the Blueprint."), *GetName());
+        return;
+    }
+    if (!AnimMesh->GetAnimInstance())
+    {
+        UE_LOG(LogTemp, Warning, TEXT("[Pusher] AnimBodyMesh '%s' has no AnimInstance — assign an AnimBlueprint to it in the Blueprint."), *AnimMesh->GetName());
         return;
     }
 
@@ -161,11 +166,11 @@ void APusherCharacter::StopPushAnimation()
 
     if (PushMontage)
     {
-        USkeletalMeshComponent* AnimMesh = FindAnimatedMesh(this);
-        if (AnimMesh)
-        {
-            AnimMesh->GetAnimInstance()->Montage_Stop(0.25f, PushMontage);
-        }
+        USkeletalMeshComponent* AnimMesh = AnimBodyMesh ? AnimBodyMesh : FindAnimatedMesh(this);
+            if (AnimMesh && AnimMesh->GetAnimInstance())
+            {
+                AnimMesh->GetAnimInstance()->Montage_Stop(0.25f, PushMontage);
+            }
     }
 
     UE_LOG(LogTemp, Log, TEXT("[Pusher] Push montage stopped."));
@@ -179,76 +184,41 @@ void APusherCharacter::UpdatePositionAlongPath(float DeltaTime)
 
     FVector BoulderPos = Boulder->GetActorLocation();
 
-    // Full 3D hill-forward direction (path start ? end), same as Unity's GetHillForward()
     FVector HillFwd = Boulder->GetPathDirection();
     if (HillFwd.IsNearlyZero()) return;
 
-    // Slope-perpendicular up vector: Cross(right, hillFwd)
-    // Equivalent to Unity's slopeUp = Vector3.Cross(hillRight, hillFwd)
-    FVector HillRight = FVector::CrossProduct(HillFwd, FVector::UpVector).GetSafeNormal();
-    FVector SlopeUp   = FVector::CrossProduct(HillRight, HillFwd).GetSafeNormal();
+    // Step back from the boulder centre along the slope direction.
+    FVector TargetXY = BoulderPos - HillFwd * StandOffsetBehind;
 
-    // Scale slope offset by boulder progress if ramping is enabled
-    float Progress        = Boulder->GetProgress();
-    float EffectiveOffset = bRampOffsetAlongPath
-                          ? SlopeHeightOffset * Progress
-                          : SlopeHeightOffset;
+    // Line trace straight down to find the actual slope surface at this XY position.
+    // This corrects for the boulder centre being above the ground by its own radius.
+    FVector TraceStart = FVector(TargetXY.X, TargetXY.Y, TargetXY.Z + 1000.f);
+    FVector TraceEnd   = FVector(TargetXY.X, TargetXY.Y, TargetXY.Z - 1000.f);
 
-    // Rest position: behind boulder along hill, lifted perpendicular to slope
-    FVector RestPos = BoulderPos
-                    - HillFwd * StandOffsetBehind
-                    + SlopeUp * EffectiveOffset;
+    FHitResult Hit;
+    FCollisionQueryParams Params;
+    Params.AddIgnoredActor(this);
+    Params.AddIgnoredActor(Boulder);
 
-    // Script-driven lunge: sine pulse toward boulder on each push
-    if (bIsLunging)
+    FVector NewPos = TargetXY; // fallback if trace misses
+    if (GetWorld()->LineTraceSingleByChannel(Hit, TraceStart, TraceEnd, ECC_WorldStatic, Params))
     {
-        LungeT += DeltaTime * LungeSpeed;
-        if (LungeT >= 1.f)
-        {
-            LungeT     = 0.f;
-            bIsLunging = false;
-        }
+        // Place capsule so feet land exactly on the surface
+        const float HalfHeight = GetCapsuleComponent()->GetScaledCapsuleHalfHeight();
+        NewPos = Hit.ImpactPoint + FVector(0.f, 0.f, HalfHeight);
     }
-    float T = bIsLunging ? FMath::Sin(LungeT * PI) : 0.f;
-
-    // Lunge forward along the FLAT (XY) push direction so Aoi doesn't float
-    // upward on a steep slope — same intent as Unity's hillFwd lunge but
-    // clamped to the ground plane.
-    FVector LungeDir = FVector(HillFwd.X, HillFwd.Y, 0.f).GetSafeNormal();
-    FVector Target   = RestPos + LungeDir * (T * LungeDistance);
-
-    // Smooth follow (Lerp), equivalent to Unity's Vector3.Lerp with followSmoothSpeed
-    FVector Current = GetActorLocation();
-    FVector NewPos  = FMath::Lerp(Current, Target,
-                                  FMath::Clamp(DeltaTime * FollowSmoothSpeed, 0.f, 1.f));
-
-    // On the initial snap (DeltaTime == 0) teleport directly to RestPos
-    if (DeltaTime <= 0.f) NewPos = RestPos;
 
     SetActorLocation(NewPos, false, nullptr, ETeleportType::TeleportPhysics);
 
-    // Face directly toward the boulder (look-at), not just along HillFwd.
-    // This works regardless of MetaHuman mesh orientation offsets.
-    FVector ToBoulder = (BoulderPos - NewPos);
-    ToBoulder.Z = 0.f;   // keep rotation on the horizontal plane — no tilt up
+    // Face toward the boulder. MetaHuman mesh root is +Y so subtract 90° yaw.
+    FVector ToBoulder = BoulderPos - NewPos;
+    ToBoulder.Z = 0.f;
     if (!ToBoulder.IsNearlyZero())
     {
-        FRotator LookAt = ToBoulder.GetSafeNormal().Rotation();
-        FRotator Lean   = FRotator(0.f, 0.f, 0.f); // reserved for future lean
-        FRotator TargetRot = LookAt + Lean;
+        FRotator TargetRot = ToBoulder.GetSafeNormal().Rotation() + FRotator(0.f, -90.f, 0.f);
         SetActorRotation(DeltaTime > 0.f
             ? FMath::RInterpTo(GetActorRotation(), TargetRot, DeltaTime, 10.f)
             : TargetRot);
-    }
-
-    // Log once for debugging
-    static bool bLogged = false;
-    if (!bLogged)
-    {
-        bLogged = true;
-        UE_LOG(LogTemp, Log, TEXT("[Pusher] First position: X=%.1f Y=%.1f Z=%.1f | RestPos: X=%.1f Y=%.1f Z=%.1f | SlopeOffset=%.1f"),
-               NewPos.X, NewPos.Y, NewPos.Z,
-               RestPos.X, RestPos.Y, RestPos.Z, EffectiveOffset);
     }
 }
 

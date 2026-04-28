@@ -24,6 +24,7 @@ class APusherCharacter;
 class UErgManagerComponent;
 class ACameraActor;
 class UBoulderHUD;
+class UUserWidget;
 class ACharacter;
 
 // ── Delegates (replaces Unity's UnityEvent onGameWon / onGameLost) ────────────
@@ -87,9 +88,9 @@ public:
 
     // ── HUD ───────────────────────────────────────────────────────────────────
 
-    /** Set to WBP_BoulderHUD (or any UBoulderHUD child Blueprint) in the editor. */
+    /** Set to WBP_BoulderHUD in the editor. Accepts any UserWidget Blueprint. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "HUD")
-    TSubclassOf<UBoulderHUD> HUDWidgetClass;
+    TSubclassOf<UUserWidget> HUDWidgetClass;
 
     /** Created at BeginPlay; cached for direct C++ calls. */
     UPROPERTY(BlueprintReadOnly, Category = "HUD")
@@ -250,8 +251,10 @@ private:
     TTuple<EQTERating, float> EvaluatePush(float RepTimeSec);
 
     // ── ERG component ref ─────────────────────────────────────────────────────
-
-    UErgManagerComponent* ErgComp = nullptr;
+public:
+    UPROPERTY(VisibleAnywhere, Category = "ERG")
+    TObjectPtr<UErgManagerComponent> ErgComp;
+private:
 
     // Helper — calls the matching ShowXxx method if HUDInstance is valid.
     void UpdateHUDForState(EBoulderGameState NewState);

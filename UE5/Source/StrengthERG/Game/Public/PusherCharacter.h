@@ -55,34 +55,13 @@ public:
      * direction (negative = behind the boulder, toward path start).
      * Tune this so the character's hands contact the boulder surface.
      */
-    // ?? Positioning ???????????????????????????????????????????????????????????????????
+    // Positioning
 
-    /** How far behind the boulder centre the character stands (Unreal units). */
+    /** How far behind the boulder centre the character stands (Unreal units). Tune in BP. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Positioning")
-    float StandOffsetBehind = 120.f;
+    float StandOffsetBehind = 200.f;
 
-    /**
-     * Lifts the character perpendicular to the slope so feet sit on the surface.
-     * Equivalent to Unity's slopeHeightOffset. Tune to match terrain.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Positioning")
-    float SlopeHeightOffset = 0.f;
-
-    /**
-     * When true, SlopeHeightOffset scales from 0 at path start to full at path end,
-     * matching terrain that steepens higher up. Port of Unity's rampOffsetAlongPath.
-     */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Positioning")
-    bool bRampOffsetAlongPath = true;
-
-    /** Smooth follow speed (higher = snappier). Port of Unity's followSmoothSpeed. */
-    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Positioning")
-    float FollowSmoothSpeed = 8.f;
-
-    /**
-     * When true, the character’s position is updated every frame to follow the
-     * boulder along its path. Disable if you want to manage position manually.
-     */
+    /** When true, position is updated every frame to follow the boulder. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Positioning")
     bool bFollowBoulder = true;
 
@@ -108,6 +87,16 @@ public:
      */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
     UAnimMontage* PushMontage = nullptr;
+
+    /**
+     * Explicit reference to the Body skeletal mesh component on the MetaHuman.
+     * When set, montage playback targets this mesh directly instead of relying on
+     * the automatic search (which fails if only the Face mesh has an AnimInstance).
+     * In BP_Aoi: set this to the "Body" SkeletalMeshComponent and assign its
+     * AnimBlueprint so it has a live AnimInstance before the first push.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Animation")
+    USkeletalMeshComponent* AnimBodyMesh = nullptr;
 
     /**
      * Playback rate of the push montage. Increase to match faster rep cadence.

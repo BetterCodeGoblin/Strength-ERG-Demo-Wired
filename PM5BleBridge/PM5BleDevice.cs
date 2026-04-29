@@ -1,69 +1,80 @@
-// PM5BleDevice.cs
-// Manages a single BLE GATT connection to a Concept2 PM5 device and
-// streams CSAFE telemetry to a ChannelServer TCP slot.
+// PM5BleDevice.cs — BLE GATT connection and data streaming for one Concept2 PM5.
 //
-// Protocol notes:
-//   All Concept2 PM5 devices (RowErg, BikeErg, StrengthErg) share identical
-//   GATT service/characteristic UUIDs and CSAFE framing.  What differs is
-//   which CSAFE fields carry meaningful data for each workout type:
+// ?? Service architecture (from working ERGBridgeBLE, commit 68cb4cf) ?????????
 //
-//     RowErg/BikeErg  ?  GETCADENCE (stroke rate / cadence)
-//                         GETPOWER   (watts)
-//                         GETHRCUR   (HR)
-//                         GETTWORK   (elapsed)
+// CE060000  DiscoveryService — advertisement UUID only, NOT a data path.
 //
-//     StrengthErg     ?  WRAPPER + STROKESTATS (rep count, drive time, pull dist)
-//                         GETHRCUR   (HR)
-//                         GETTWORK   (elapsed)
+// RowErg / BikeErg / SkiErg  (CE060030 base):
+//   CE060030  RowingService    main data service (post-connect only)
+//   CE060080  Multiplexed      preferred notify; byte[0]=selector 0x20=GenStatus 0x35=StrokeData
+//   CE060035  StrokeData       per-stroke notify, fires once per completed rep
+//   CE060031  GeneralStatus    1 Hz: elapsed, pace, SPM, heart rate
 //
-//   We poll ALL commands from every device and include all fields in the JSON
-//   output.  The UE5 side selects fields by DeviceChannel.  This means if you
-//   mis-assign a device to a slot, the debug view will show zeros rather than crash.
+// StrengthErg  (advertised name contains "STR"):
+//   CE060060  StrengthService  passive ERG Link data — silent to external apps
+//   CE060020  CtrlService      CSAFE request/response control service
+//   CE060021  CtrlTx           write CSAFE frames here
+//   CE060022  CtrlRx           subscribe for CSAFE responses
 //
-// BLE GATT UUIDs (Concept2 PM Control Service):
-//   Service  : CE060000-43E5-11E4-916C-0800200C9A66
-//   RX (write):CE060001-43E5-11E4-916C-0800200C9A66   ? we write CSAFE frames here
-//   TX (notify):CE060002-43E5-11E4-916C-0800200C9A66  ? responses arrive here
+// ?? CE060035 StrokeData byte layout (20 bytes) ???????????????????????????????
+//   [0]     stroke state  0=idle 1=accel 2=drive 3=dwell 4=recovery
+//   [1-3]   elapsed       uint24-LE * 0.01 s
+//   [4]     drive length  uint8 * 0.01 m (cm) — pullDistance equivalent
+//   [5]     drive time    uint8 * 0.01 s
+//   [12-15] work/stroke   uint32-LE * 0.001 J
+//   [16-17] stroke count  uint16-LE
+//   [18]    stroke rate   uint8 SPM
 //
-// Request-response synchronisation:
-//   We write a CSAFE frame to CE060001 then wait for a notification on CE060002.
-//   A SemaphoreSlim prevents concurrent in-flight requests.
-//   Partial notifications are accumulated until a complete frame (F1...F2) arrives.
+// ?? CE060031 GeneralStatus byte layout (20 bytes) ????????????????????????????
+//   [0-2]   elapsed       uint24-LE * 0.01 s
+//   [6-7]   pace          uint16-LE s/500 m  (0 when idle)
+//   [8]     stroke rate   uint8 SPM
+//   [9]     heart rate    uint8 BPM  (0 = no HR belt)
 
+using System.Collections.Concurrent;
 using Windows.Devices.Bluetooth;
 using Windows.Devices.Bluetooth.GenericAttributeProfile;
 using Windows.Security.Cryptography;
+using Windows.Storage.Streams;
 
 namespace PM5BleBridge;
 
 internal class PM5BleDevice
 {
-    // ?? PM5 GATT UUIDs ??????????????????????????????????????????????????????
-    private static readonly Guid C2_SERVICE  = Guid.Parse("CE060000-43E5-11E4-916C-0800200C9A66");
-    private static readonly Guid C2_RX       = Guid.Parse("CE060001-43E5-11E4-916C-0800200C9A66");
-    private static readonly Guid C2_TX       = Guid.Parse("CE060002-43E5-11E4-916C-0800200C9A66");
+    // ?? UUIDs ?????????????????????????????????????????????????????????????????
+    // CE060000 = discovery/advertisement only — NOT a data service.
 
-    // ?? Identity ????????????????????????????????????????????????????????????
-    public  string DeviceName { get; }
+    // RowErg / BikeErg / SkiErg (CE060030 base)
+    static readonly Guid UUID_RowingSvc  = new("CE060030-43E5-11E4-916C-0800200C9A66");
+    static readonly Guid UUID_Mux        = new("CE060080-43E5-11E4-916C-0800200C9A66");
+    static readonly Guid UUID_StrokeData = new("CE060035-43E5-11E4-916C-0800200C9A66");
+    static readonly Guid UUID_GenStatus  = new("CE060031-43E5-11E4-916C-0800200C9A66");
+
+    // StrengthErg passive data (CE060060) — for detection/enumeration only
+    static readonly Guid UUID_StrSvc     = new("CE060060-43E5-11E4-916C-0800200C9A66");
+    static readonly Guid UUID_StrGenStat = new("CE060061-43E5-11E4-916C-0800200C9A66");
+    static readonly Guid UUID_StrRepData = new("CE060065-43E5-11E4-916C-0800200C9A66");
+
+    // StrengthErg CSAFE control (CE060020) — active request/response
+    static readonly Guid UUID_CtrlSvc = new("CE060020-43E5-11E4-916C-0800200C9A66");
+    static readonly Guid UUID_CtrlTx  = new("CE060021-43E5-11E4-916C-0800200C9A66");
+    static readonly Guid UUID_CtrlRx  = new("CE060022-43E5-11E4-916C-0800200C9A66");
+
+    // ?? Identity ??????????????????????????????????????????????????????????????
+    public  string        DeviceName { get; }
+    public  ChannelServer Channel    { get; }
     private readonly ulong _address;
 
-    // ?? Assigned channel ????????????????????????????????????????????????????
-    public ChannelServer Channel { get; }
+    // ?? Shared state (volatile — BLE thread pool writes, send path reads) ?????
+    private volatile int   _hr      = 0;
+    private volatile float _elapsed = 0f;
+    private volatile float _pace    = 0f;
+    private volatile float _spm     = 0f;
+    private volatile float _power   = 0f;
+    private volatile int   _lastRep = -1;
 
-    // ?? BLE handles ?????????????????????????????????????????????????????????
-    private BluetoothLEDevice?         _device;
-    private GattCharacteristic?        _rx;
-    private GattCharacteristic?        _tx;
-
-    // ?? Request-response sync ???????????????????????????????????????????????
-    private readonly SemaphoreSlim                    _requestLock = new(1, 1);
-    private          TaskCompletionSource<byte[]>?    _pendingResponse;
-    private          byte[]                           _responseBuffer = [];
-
-    // ?? State ???????????????????????????????????????????????????????????????
-    private int   _lastRepCount = -1;
-    private int   _lastLoggedElapsedSec = -1;   // prevents console spam (one log per 5-sec bucket)
-    private bool  _stopRequested;
+    private readonly ConcurrentQueue<byte[]> _csafeRx = new();
+    private bool _stop;
 
     public PM5BleDevice(string deviceName, ulong address, ChannelServer channel)
     {
@@ -72,256 +83,471 @@ internal class PM5BleDevice
         Channel    = channel;
     }
 
-    // ?? Connection ??????????????????????????????????????????????????????????
-
-    /// <summary>
-    /// Connects to the PM5, subscribes to GATT notifications, and starts the
-    /// polling loop.  Returns when the connection is lost; caller should retry.
-    /// </summary>
+    // ?? Entry point ???????????????????????????????????????????????????????????
     public async Task RunAsync(CancellationToken ct)
     {
-        Console.WriteLine($"[{Channel.ChannelName}] Connecting to {DeviceName}...");
-
+        Console.WriteLine(
+            $"[{Channel.ChannelName}] Connecting to \"{DeviceName}\" (0x{_address:X12})...");
+        BluetoothLEDevice? dev = null;
         try
         {
-            _device = await BluetoothLEDevice.FromBluetoothAddressAsync(_address);
-            if (_device == null)
+            dev = await BluetoothLEDevice.FromBluetoothAddressAsync(_address);
+            if (dev == null)
             {
-                Console.WriteLine($"[{Channel.ChannelName}] FromBluetoothAddress returned null for {DeviceName}");
+                Console.WriteLine($"[{Channel.ChannelName}] FromBluetoothAddress returned null.");
                 return;
             }
+            Console.WriteLine($"[{Channel.ChannelName}] Device: \"{dev.Name}\"");
+            await Task.Delay(100, ct);
 
-            // ?? Get C2 service ??????????????????????????????????????????????
-            var svcResult = await _device.GetGattServicesForUuidAsync(C2_SERVICE,
-                BluetoothCacheMode.Uncached);
-            if (svcResult.Status != GattCommunicationStatus.Success ||
-                svcResult.Services.Count == 0)
-            {
-                Console.WriteLine($"[{Channel.ChannelName}] C2 service not found on {DeviceName} " +
-                                  $"(status={svcResult.Status})");
-                return;
-            }
-            var service = svcResult.Services[0];
+            bool isStr = DeviceName.IndexOf("STR", StringComparison.OrdinalIgnoreCase) >= 0;
+            Console.WriteLine($"[{Channel.ChannelName}] Path: " +
+                (isStr ? "StrengthErg => CE060020 CSAFE"
+                       : "RowErg/BikeErg/SkiErg => CE060030 notifications"));
 
-            // ?? Get characteristics ?????????????????????????????????????????
-            var rxResult = await service.GetCharacteristicsForUuidAsync(C2_RX,
-                BluetoothCacheMode.Uncached);
-            var txResult = await service.GetCharacteristicsForUuidAsync(C2_TX,
-                BluetoothCacheMode.Uncached);
-
-            if (rxResult.Status != GattCommunicationStatus.Success ||
-                rxResult.Characteristics.Count == 0 ||
-                txResult.Status != GattCommunicationStatus.Success ||
-                txResult.Characteristics.Count == 0)
-            {
-                Console.WriteLine($"[{Channel.ChannelName}] RX/TX characteristics not found on {DeviceName}");
-                return;
-            }
-
-            _rx = rxResult.Characteristics[0];
-            _tx = txResult.Characteristics[0];
-
-            // ?? Subscribe to TX notifications ???????????????????????????????
-            var notifyStatus = await _tx.WriteClientCharacteristicConfigurationDescriptorAsync(
-                GattClientCharacteristicConfigurationDescriptorValue.Notify);
-            if (notifyStatus != GattCommunicationStatus.Success)
-            {
-                Console.WriteLine($"[{Channel.ChannelName}] Failed to subscribe to notifications on {DeviceName}");
-                return;
-            }
-
-            _tx.ValueChanged += OnNotification;
-
-            Console.WriteLine($"[{Channel.ChannelName}] Connected to {DeviceName} — starting poll loop");
-
-            Channel.Send($"{{\"type\":\"status\",\"connected\":false,\"statusText\":\"BLE connected to {DeviceName}, waiting for workout\"}}");
-
-            await PollLoopAsync(ct);
+            if (isStr) await RunStrengthAsync(dev, ct);
+            else       await RunRowingAsync(dev, ct);
         }
-        catch (Exception ex) when (!_stopRequested)
+        catch (OperationCanceledException) { }
+        catch (Exception ex) when (!_stop)
         {
-            Console.WriteLine($"[{Channel.ChannelName}] Connection error for {DeviceName}: {ex.Message}");
+            Console.WriteLine($"[{Channel.ChannelName}] Session error: {ex.Message}");
         }
         finally
         {
-            if (_tx != null) _tx.ValueChanged -= OnNotification;
-            _device?.Dispose();
-            _device = null;
-            _rx     = null;
-            _tx     = null;
+            dev?.Dispose();
+            Console.WriteLine($"[{Channel.ChannelName}] Session ended for \"{DeviceName}\".");
         }
     }
 
-    public void Stop() => _stopRequested = true;
+    public void Stop() => _stop = true;
 
-    // ?? BLE notification handler (runs on a BLE thread pool thread) ?????????
-
-    private void OnNotification(GattCharacteristic _, GattValueChangedEventArgs args)
+    // ?? StrengthErg: CE060020 CSAFE request / response ???????????????????????
+    private async Task RunStrengthAsync(BluetoothLEDevice dev, CancellationToken ct)
     {
-        CryptographicBuffer.CopyToByteArray(args.CharacteristicValue, out byte[] chunk);
-        if (chunk == null || chunk.Length == 0) return;
-
-        // Accumulate chunks until we have a complete CSAFE frame (F1 ... F2)
-        _responseBuffer = [.. _responseBuffer, .. chunk];
-
-        // Discard garbage that doesn't start with CSAFE_START
-        int startIdx = Array.IndexOf(_responseBuffer, CsafeHelper.START);
-        if (startIdx < 0) { _responseBuffer = []; return; }
-        if (startIdx > 0) _responseBuffer = _responseBuffer[startIdx..];
-
-        // Check for CSAFE_STOP
-        int stopIdx = Array.IndexOf(_responseBuffer, CsafeHelper.STOP, 1);
-        if (stopIdx <= 0) return;  // frame not complete yet
-
-        byte[] frame = _responseBuffer[..(stopIdx + 1)];
-        _responseBuffer = _responseBuffer[(stopIdx + 1)..];  // keep any overflow
-
-        _pendingResponse?.TrySetResult(frame);
-    }
-
-    // ?? CSAFE request-response ??????????????????????????????????????????????
-
-    private async Task<byte[]?> SendCsafeAsync(byte[] frame, TimeSpan timeout)
-    {
-        if (_rx == null || _tx == null) return null;
-
-        await _requestLock.WaitAsync();
-        try
+        Console.WriteLine($"[{Channel.ChannelName}] Looking up CE060020 (CSAFE control)...");
+        GattDeviceService ctrl;
+        try { ctrl = await SvcAsync(dev, UUID_CtrlSvc, "CE060020"); }
+        catch (Exception ex)
         {
-            _pendingResponse = new TaskCompletionSource<byte[]>(
-                TaskCreationOptions.RunContinuationsAsynchronously);
+            Console.WriteLine($"[{Channel.ChannelName}] CE060020 not found: {ex.Message}");
+            await DumpAsync(dev);
+            return;
+        }
 
-            var buffer = CryptographicBuffer.CreateFromByteArray(frame);
-            var writeStatus = await _rx.WriteValueAsync(buffer);
-            if (writeStatus != GattCommunicationStatus.Success)
+        using (ctrl)
+        {
+            GattCharacteristic tx, rx;
+            try
             {
-                Console.WriteLine($"[{Channel.ChannelName}] CSAFE write failed: {writeStatus}");
-                return null;
+                tx = await CharAsync(ctrl, UUID_CtrlTx, "CE060021 TX");
+                rx = await CharAsync(ctrl, UUID_CtrlRx, "CE060022 RX");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{Channel.ChannelName}] CSAFE chars missing: {ex.Message}");
+                await DumpAsync(dev);
+                return;
             }
 
-            using var cts = new CancellationTokenSource(timeout);
-            cts.Token.Register(() => _pendingResponse.TrySetCanceled());
-
-            try   { return await _pendingResponse.Task; }
-            catch (TaskCanceledException) { return null; }
-        }
-        finally
-        {
-            _pendingResponse = null;
-            _requestLock.Release();
-        }
-    }
-
-    // ?? Poll loop ???????????????????????????????????????????????????????????
-
-    private async Task PollLoopAsync(CancellationToken ct)
-    {
-        var responseTimeout = TimeSpan.FromSeconds(2);
-
-        while (!ct.IsCancellationRequested && !_stopRequested)
-        {
-            // ?? Rowing/Cycling frame ????????????????????????????????????????
-            // Query: cadence, power, HR, elapsed
-            float strokeRate = 0f, powerWatts = 0f, paceSec = 0f;
-            int   hr = 0;
-            float elapsed = 0f;
-            bool  rowOk = false;
-
-            var rowResp = await SendCsafeAsync(CsafeHelper.RowCycFrame, responseTimeout);
-            if (rowResp != null)
+            rx.ValueChanged += (_, a) =>
             {
-                rowOk = true;
-                var cadData = CsafeHelper.ExtractPublicCmd(rowResp, CsafeHelper.CMD_CADENCE);
-                var pwrData = CsafeHelper.ExtractPublicCmd(rowResp, CsafeHelper.CMD_POWER);
-                var hrData  = CsafeHelper.ExtractPublicCmd(rowResp, CsafeHelper.CMD_HR);
-                var wkData  = CsafeHelper.ExtractPublicCmd(rowResp, CsafeHelper.CMD_WORK);
-
-                if (cadData != null) strokeRate = CsafeHelper.ParseCadence(cadData);
-                if (pwrData != null) powerWatts = CsafeHelper.ParsePower(pwrData);
-                if (hrData  != null) hr         = CsafeHelper.ParseHR(hrData);
-                if (wkData  != null) elapsed    = CsafeHelper.ParseElapsed(wkData);
-
-                if (powerWatts > 0f) paceSec = CsafeHelper.ComputeRowingPace(powerWatts);
-            }
-
-            // 60 ms inter-command gap (matches PM5HidDiag INTER_CMD_MS)
-            await Task.Delay(60, ct);
-
-            // ?? Strength frame ??????????????????????????????????????????????
-            // Query: stroke stats (rep count / drive time / pull dist), HR, elapsed
-            int   repCount    = 0;
-            float driveTimeSec = 0f;
-            int   pullDist    = 0;
-            bool  strOk = false;
-
-            var strResp = await SendCsafeAsync(CsafeHelper.StrengthFrame, responseTimeout);
-            if (strResp != null)
-            {
-                strOk = true;
-                var ssData = CsafeHelper.ExtractProprietarySubCmd(strResp, CsafeHelper.SUB_STROKE);
-                if (ssData != null && ssData.Length >= 7)
+                CryptographicBuffer.CopyToByteArray(a.CharacteristicValue, out byte[] raw);
+                if (raw?.Length > 0)
                 {
-                    driveTimeSec = ssData[2] * 0.01f;
-                    pullDist     = ssData[5];
-                    repCount     = ssData[6];
+                    Console.WriteLine(
+                        $"[{Channel.ChannelName}] CSAFE RX [{raw.Length}]: " +
+                        BitConverter.ToString(raw));
+                    _csafeRx.Enqueue(raw);
+                }
+            };
+            await NotifyAsync(rx, "CE060022");
+            Console.WriteLine($"[{Channel.ChannelName}] CE060022 subscribed. Polling...");
+            EmitStatus(true, $"CSAFE connected — {DeviceName}");
+            await StrPollLoop(dev, tx, ct);
+        }
+    }
+
+    private async Task StrPollLoop(
+        BluetoothLEDevice dev, GattCharacteristic tx, CancellationToken ct)
+    {
+        int lastRep = -1;
+        while (!ct.IsCancellationRequested && !_stop
+               && dev.ConnectionStatus == BluetoothConnectionStatus.Connected)
+        {
+            try
+            {
+                await WriteCsafe(tx, CsafeHelper.BuildFrame(0x1A, 0x02, 0x6E, 0x00));
+                await Task.Delay(200, ct);
+                DrainCsafe(ref lastRep);
+
+                await WriteCsafe(tx, CsafeHelper.BuildFrame(0xA0, 0xB0));
+                await Task.Delay(200, ct);
+                DrainCsafe(ref lastRep);
+
+                EmitStatus(true, $"CSAFE Active — {DeviceName}",
+                    repCount: Math.Max(0, lastRep));
+                await Task.Delay(100, ct);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{Channel.ChannelName}] CSAFE poll error: {ex.Message}");
+                await Task.Delay(500, ct);
+            }
+        }
+    }
+
+    private void DrainCsafe(ref int lastRep)
+    {
+        while (_csafeRx.TryDequeue(out byte[]? r))
+        {
+            var wt = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_WORK);
+            if (wt?.Length >= 3)
+                _elapsed = wt[0] * 3600f + wt[1] * 60f + wt[2];
+
+            var hr = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_HR);
+            if (hr?.Length >= 1) _hr = hr[0];
+
+            var ss = CsafeHelper.ExtractProprietarySubCmd(r, CsafeHelper.SUB_STROKE);
+            if (ss?.Length >= 7)
+            {
+                float dt = ss[2] * 0.01f;
+                int   pd = ss[5];
+                int   rc = ss[6];
+                if (rc > 0 && rc > lastRep)
+                {
+                    lastRep = rc;
+                    Channel.Send(
+                        $"{{\"type\":\"rep\",\"repCount\":{rc}," +
+                        $"\"driveTimeSec\":{dt:F3},\"pullDistance\":{pd}," +
+                        $"\"heartRate\":{_hr},\"elapsedSec\":{_elapsed:F2}," +
+                        $"\"connected\":true}}");
+                    Console.WriteLine(
+                        $"[{Channel.ChannelName}] Rep #{rc}: dt={dt:F2}s pd={pd}");
+                }
+            }
+        }
+    }
+
+    // ?? RowErg / BikeErg / SkiErg: CE060030 notification path ???????????????
+    private async Task RunRowingAsync(BluetoothLEDevice dev, CancellationToken ct)
+    {
+        Console.WriteLine($"[{Channel.ChannelName}] Looking up CE060030...");
+        GattDeviceService? svc = null;
+        try { svc = await SvcAsync(dev, UUID_RowingSvc, "CE060030"); }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{Channel.ChannelName}] CE060030 direct lookup failed: {ex.Message}");
+        }
+
+        if (svc == null)
+        {
+            Console.WriteLine($"[{Channel.ChannelName}] Falling back to service enumeration...");
+            svc = await FindRowingSvcAsync(dev);
+        }
+
+        if (svc == null)
+        {
+            Console.WriteLine(
+                $"[{Channel.ChannelName}] No rowing service found. " +
+                "Start a workout on the PM5 screen, then retry.");
+            await DumpAsync(dev);
+            return;
+        }
+
+        using (svc)
+        {
+            Console.WriteLine($"[{Channel.ChannelName}] Using service: {svc.Uuid}");
+            bool ok = false;
+
+            // 1. CE060080 Multiplexed (preferred)
+            try
+            {
+                await Task.Delay(200, ct);
+                var mux = await CharAsync(svc, UUID_Mux, "CE060080 Multiplexed");
+                mux.ValueChanged += (_, a) =>
+                {
+                    CryptographicBuffer.CopyToByteArray(a.CharacteristicValue, out byte[] d);
+                    if (d != null) OnMux(d);
+                };
+                await NotifyAsync(mux, "CE060080");
+                Console.WriteLine($"[{Channel.ChannelName}] Subscribed CE060080 Multiplexed (primary).");
+                ok = true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(
+                    $"[{Channel.ChannelName}] CE060080 unavailable: {ex.Message} — trying direct chars.");
+            }
+
+            // 2. CE060035 StrokeData (per-rep fallback)
+            try
+            {
+                await Task.Delay(200, ct);
+                var sc = await CharAsync(svc, UUID_StrokeData, "CE060035 StrokeData");
+                sc.ValueChanged += (_, a) =>
+                {
+                    CryptographicBuffer.CopyToByteArray(a.CharacteristicValue, out byte[] d);
+                    if (d != null) OnStroke(d);
+                };
+                await NotifyAsync(sc, "CE060035");
+                Console.WriteLine($"[{Channel.ChannelName}] Subscribed CE060035 StrokeData.");
+                ok = true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{Channel.ChannelName}] CE060035 unavailable: {ex.Message}");
+            }
+
+            // 3. CE060031 GeneralStatus (1 Hz)
+            try
+            {
+                await Task.Delay(200, ct);
+                var gs = await CharAsync(svc, UUID_GenStatus, "CE060031 GeneralStatus");
+                gs.ValueChanged += (_, a) =>
+                {
+                    CryptographicBuffer.CopyToByteArray(a.CharacteristicValue, out byte[] d);
+                    if (d != null) OnGenStatus(d);
+                };
+                await NotifyAsync(gs, "CE060031");
+                Console.WriteLine($"[{Channel.ChannelName}] Subscribed CE060031 GeneralStatus (1 Hz).");
+                ok = true;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{Channel.ChannelName}] CE060031 unavailable: {ex.Message}");
+            }
+
+            if (!ok)
+            {
+                Console.WriteLine($"[{Channel.ChannelName}] No characteristics subscribed.");
+                await DumpAsync(dev);
+                return;
+            }
+
+            Console.WriteLine($"[{Channel.ChannelName}] Ready — waiting for stroke notifications.");
+            EmitStatus(true, $"BLE notifications active — {DeviceName}");
+            await DisconnectWait(dev, ct);
+        }
+    }
+
+    // ?? Notification handlers ?????????????????????????????????????????????????
+
+    private void OnMux(byte[] d)
+    {
+        if (d.Length < 2) return;
+        byte   sel   = d[0];
+        byte[] inner = d[1..];
+        if      (sel == 0x20 && inner.Length >= 10) OnGenStatus(inner);
+        else if (sel == 0x35 && inner.Length >= 17) OnStroke(inner);
+        else
+            Console.WriteLine(
+                $"[{Channel.ChannelName}] CE060080 sel=0x{sel:X2} len={d.Length}: " +
+                BitConverter.ToString(d, 0, Math.Min(d.Length, 8)));
+    }
+
+    private void OnStroke(byte[] d)
+    {
+        if (d.Length < 18) return;
+        if (d[0] == 0 || d[0] == 1) return;    // idle / accel only — not a completed rep
+
+        float elapsed = (d[1] | (d[2] << 8) | (d[3] << 16)) * 0.01f;
+        int   len     = d[4];                   // cm; pullDistance equivalent
+        float dt      = d[5] * 0.01f;
+        int   cnt     = d[16] | (d[17] << 8);
+        int   spm     = d.Length >= 19 ? d[18] : 0;
+
+        float pwr = 0f;
+        if (d.Length >= 16 && dt > 0f)
+        {
+            uint w = (uint)(d[12] | (d[13] << 8) | (d[14] << 16) | (d[15] << 24));
+            pwr = w * 0.001f / dt;
+        }
+
+        if (cnt <= 0 || dt <= 0f) return;
+
+        _elapsed = elapsed;
+        if (spm > 0) _spm = spm;
+        if (pwr > 0f) { _power = pwr; _pace = CsafeHelper.ComputeRowingPace(pwr); }
+
+        if (cnt > _lastRep)
+        {
+            _lastRep = cnt;
+            Channel.Send(
+                $"{{\"type\":\"rep\",\"repCount\":{cnt}," +
+                $"\"driveTimeSec\":{dt:F3},\"pullDistance\":{len}," +
+                $"\"heartRate\":{_hr},\"elapsedSec\":{elapsed:F2}," +
+                $"\"connected\":true}}");
+            Console.WriteLine(
+                $"[{Channel.ChannelName}] Stroke #{cnt}: " +
+                $"dt={dt:F2}s len={len}cm spm={spm} pwr={pwr:F0}W");
+        }
+    }
+
+    private void OnGenStatus(byte[] d)
+    {
+        if (d.Length < 10) return;
+        float elapsed = (d[0] | (d[1] << 8) | (d[2] << 16)) * 0.01f;
+        int   paceSec = d[6] | (d[7] << 8);
+        int   spm     = d[8];
+        int   hr      = d[9];
+
+        _elapsed = elapsed;
+        _hr      = hr;
+        if (paceSec > 0) _pace = paceSec;
+        if (spm     > 0) _spm  = spm;
+        if (paceSec > 0 && _power <= 0f)
+            _power = (float)(2.8 * Math.Pow(500.0 / paceSec, 3.0));
+
+        EmitStatus(true, $"BLE Active — {DeviceName}");
+    }
+
+    // ?? JSON helpers ??????????????????????????????????????????????????????????
+    private void EmitStatus(bool connected, string text = "", int repCount = -1)
+    {
+        int rc = repCount >= 0 ? repCount : Math.Max(0, _lastRep);
+        Channel.Send(
+            $"{{\"type\":\"status\"," +
+            $"\"connected\":{(connected ? "true" : "false")}," +
+            $"\"strokeRate\":{_spm:F1}," +
+            $"\"powerWatts\":{_power:F1}," +
+            $"\"paceSec500m\":{_pace:F1}," +
+            $"\"heartRate\":{_hr}," +
+            $"\"elapsedSec\":{_elapsed:F1}," +
+            $"\"repCount\":{rc}," +
+            $"\"driveTimeSec\":0," +
+            $"\"pullDistance\":0," +
+            $"\"statusText\":\"{Esc(text)}\"}}");
+    }
+
+    // ?? CSAFE write ???????????????????????????????????????????????????????????
+    private static async Task WriteCsafe(GattCharacteristic tx, byte[] frame)
+    {
+        using var w = new DataWriter();
+        w.WriteBytes(frame);
+        var s = await tx.WriteValueAsync(w.DetachBuffer());
+        if (s != GattCommunicationStatus.Success)
+            Console.WriteLine($"[CSAFE] Write failed ({s}): {BitConverter.ToString(frame)}");
+    }
+
+    // ?? GATT helpers ??????????????????????????????????????????????????????????
+    private static async Task<GattDeviceService> SvcAsync(
+        BluetoothLEDevice dev, Guid uuid, string label)
+    {
+        var r = await dev.GetGattServicesForUuidAsync(uuid, BluetoothCacheMode.Uncached);
+        if (r.Status != GattCommunicationStatus.Success || r.Services.Count == 0)
+            throw new InvalidOperationException(
+                $"{label} not found (status={r.Status} count={r.Services.Count})");
+        Console.WriteLine($"  [GATT] Service: {label} ({uuid})");
+        return r.Services[0];
+    }
+
+    private static async Task<GattCharacteristic> CharAsync(
+        GattDeviceService svc, Guid uuid, string label)
+    {
+        var r = await svc.GetCharacteristicsForUuidAsync(uuid, BluetoothCacheMode.Uncached);
+        if (r.Status != GattCommunicationStatus.Success || r.Characteristics.Count == 0)
+            throw new InvalidOperationException($"{label} not found in {svc.Uuid}");
+        Console.WriteLine($"  [GATT] Char: {label} ({uuid})");
+        return r.Characteristics[0];
+    }
+
+    private static async Task NotifyAsync(GattCharacteristic ch, string label)
+    {
+        var s = await ch.WriteClientCharacteristicConfigurationDescriptorAsync(
+            GattClientCharacteristicConfigurationDescriptorValue.Notify);
+        if (s != GattCommunicationStatus.Success)
+            throw new InvalidOperationException(
+                $"Notify subscribe failed {label} ({ch.Uuid}): {s}");
+    }
+
+    // ?? Fallback: find rowing service by enumeration ??????????????????????????
+    private async Task<GattDeviceService?> FindRowingSvcAsync(BluetoothLEDevice dev)
+    {
+        Console.WriteLine($"[{Channel.ChannelName}] Enumerating all services (fallback)...");
+        GattDeviceService? found = null;
+        try
+        {
+            var all = await dev.GetGattServicesAsync(BluetoothCacheMode.Uncached);
+            Console.WriteLine($"[{Channel.ChannelName}] {all.Services.Count} service(s):");
+            foreach (var svc in all.Services)
+            {
+                Console.WriteLine($"  [GATT] Service: {svc.Uuid}");
+                if (found != null) { svc.Dispose(); continue; }
+
+                if (svc.Uuid == UUID_RowingSvc || svc.Uuid == UUID_StrSvc)
+                {
+                    Console.WriteLine($"  [GATT] *** Matched C2 service: {svc.Uuid}");
+                    found = svc;
+                    continue;
                 }
 
-                // Prefer HR / elapsed from this frame if not yet set
-                var hrData2 = CsafeHelper.ExtractPublicCmd(strResp, CsafeHelper.CMD_HR);
-                var wkData2 = CsafeHelper.ExtractPublicCmd(strResp, CsafeHelper.CMD_WORK);
-                if (hr == 0 && hrData2 != null) hr      = CsafeHelper.ParseHR(hrData2);
-                if (elapsed == 0f && wkData2 != null) elapsed = CsafeHelper.ParseElapsed(wkData2);
+                var chars = await svc.GetCharacteristicsAsync(BluetoothCacheMode.Uncached);
+                bool hit  = false;
+                foreach (var c in chars.Characteristics)
+                {
+                    Console.WriteLine($"         Char: {c.Uuid}");
+                    if (c.Uuid == UUID_StrokeData || c.Uuid == UUID_Mux    ||
+                        c.Uuid == UUID_GenStatus  || c.Uuid == UUID_StrRepData ||
+                        c.Uuid == UUID_StrGenStat)
+                    {
+                        Console.WriteLine($"  [GATT] *** C2 char {c.Uuid} in svc {svc.Uuid}");
+                        found = svc; hit = true; break;
+                    }
+                }
+                if (!hit) svc.Dispose();
             }
-
-            // ?? Build unified status JSON ???????????????????????????????????
-            bool connected  = rowOk || strOk;
-            string status   = connected ? $"BLE Active ({DeviceName})" : "BLE No Data";
-
-            string statusLine =
-                $"{{\"type\":\"status\"," +
-                $"\"connected\":{(connected ? "true" : "false")}," +
-                $"\"strokeRate\":{strokeRate:F1}," +
-                $"\"powerWatts\":{powerWatts:F1}," +
-                $"\"paceSec500m\":{paceSec:F1}," +
-                $"\"heartRate\":{hr}," +
-                $"\"elapsedSec\":{elapsed:F1}," +
-                $"\"repCount\":{repCount}," +
-                $"\"driveTimeSec\":{driveTimeSec:F2}," +
-                $"\"pullDistance\":{pullDist}," +
-                $"\"statusText\":\"{status}\"}}";
-
-            Channel.Send(statusLine);
-
-            // ?? Rep event (strength) ????????????????????????????????????????
-            // Fire a separate "rep" line when repCount advances so UE5's
-            // existing OnNewRep delegate path still triggers correctly.
-            if (repCount > _lastRepCount && driveTimeSec > 0f && pullDist > 0)
-            {
-                _lastRepCount = repCount;
-                string repLine =
-                    $"{{\"type\":\"rep\"," +
-                    $"\"repCount\":{repCount}," +
-                    $"\"driveTimeSec\":{driveTimeSec:F2}," +
-                    $"\"pullDistance\":{pullDist}," +
-                    $"\"heartRate\":{hr}," +
-                    $"\"elapsedSec\":{elapsed:F1}," +
-                    $"\"connected\":true}}";
-                Channel.Send(repLine);
-                Console.WriteLine($"[{Channel.ChannelName}] Rep #{repCount}: {driveTimeSec:F2}s  dist={pullDist}");
-            }
-
-            // ?? Debug console output (once per 5-second bucket, not every tick) ??
-            int elapsedSec = (int)elapsed;
-            if (elapsedSec % 5 == 0 && elapsedSec != _lastLoggedElapsedSec)
-            {
-                _lastLoggedElapsedSec = elapsedSec;
-                Console.WriteLine($"[{Channel.ChannelName}] " +
-                    $"SPM={strokeRate:F0} W={powerWatts:F0} HR={hr} " +
-                    $"Rep={repCount} Elapsed={elapsed:F0}s");
-            }
-
-            // Poll at ~4 Hz (250 ms minus the two inter-command gaps above)
-            await Task.Delay(Math.Max(0, 250 - 60 - 20), ct);
         }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{Channel.ChannelName}] Enumeration error: {ex.Message}");
+        }
+        return found;
     }
+
+    // ?? Full diagnostic GATT dump ?????????????????????????????????????????????
+    private async Task DumpAsync(BluetoothLEDevice dev)
+    {
+        Console.WriteLine($"[{Channel.ChannelName}] --- Full GATT dump ---");
+        try
+        {
+            var all = await dev.GetGattServicesAsync(BluetoothCacheMode.Uncached);
+            Console.WriteLine($"[{Channel.ChannelName}] Services: {all.Services.Count}");
+            foreach (var svc in all.Services)
+            {
+                Console.WriteLine($"  Svc: {svc.Uuid}");
+                try
+                {
+                    var ch = await svc.GetCharacteristicsAsync(BluetoothCacheMode.Uncached);
+                    foreach (var c in ch.Characteristics)
+                        Console.WriteLine(
+                            $"    Char: {c.Uuid}  props={c.CharacteristicProperties}");
+                }
+                catch (Exception ex) { Console.WriteLine($"    (failed: {ex.Message})"); }
+                svc.Dispose();
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{Channel.ChannelName}] Dump failed: {ex.Message}");
+        }
+        Console.WriteLine($"[{Channel.ChannelName}] --- End GATT dump ---");
+    }
+
+    // ?? Connection monitor ????????????????????????????????????????????????????
+    private static Task DisconnectWait(BluetoothLEDevice dev, CancellationToken ct)
+    {
+        var tcs = new TaskCompletionSource<bool>();
+        dev.ConnectionStatusChanged += (d, _) =>
+        {
+            if (d.ConnectionStatus == BluetoothConnectionStatus.Disconnected)
+                tcs.TrySetResult(true);
+        };
+        ct.Register(() => tcs.TrySetResult(false));
+        return tcs.Task;
+    }
+
+    private static string Esc(string s) =>
+        s.Replace("\\", "\\\\").Replace("\"", "\\\"");
 }

@@ -58,16 +58,11 @@ internal static class CsafeHelper
     }
 
     /// <summary>
-    /// Combined rowing/cycling poll frame: CADENCE + POWER + HR + ELAPSED.
-    /// Response is ~15 bytes — fits in a single 20-byte BLE notification.
-    /// </summary>
-    public static readonly byte[] RowCycFrame =
-        BuildFrame(CMD_CADENCE, CMD_POWER, CMD_HR, CMD_WORK);
-
-    /// <summary>
     /// Combined strength poll frame: STROKESTATS (wrapper) + HR + ELAPSED.
     /// STROKESTATS is a proprietary long command inside the wrapper (0x1A).
     /// Wrapper body: [SUB_CMD, DATA_LEN=0] means "send me this sub-command's data".
+    /// Used by the StrengthErg CE060020 CSAFE path.
+    /// Note: RowErg/BikeErg use CE060030 passive notifications, not CSAFE polling.
     /// </summary>
     public static readonly byte[] StrengthFrame =
         BuildFrame(CMD_WRAPPER, 0x02, SUB_STROKE, 0x00, CMD_HR, CMD_WORK);

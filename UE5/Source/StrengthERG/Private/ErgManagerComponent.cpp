@@ -216,17 +216,20 @@ void FErgReaderThread::ParseCsvLine(const FString& Line)
         D.PullDistance = FCString::Atoi(*Parts[2]);
         D.bIsActive    = D.RepCount > 0;
 
-        OwnerComp->ThreadSafe_UpdateData(D);
+        // CSV telemetry is a complete frame — use snapshot path so that a
+        // resting device reporting RepTimeSec=0 actually shows 0, not the
+        // last active value.
+        OwnerComp->ThreadSafe_ReplaceSnapshot(D);
         OwnerComp->ThreadSafe_EnqueueRep(D.RepCount, D.RepTimeSec, D.PullDistance);
         return;
     }
 
-    // Rowing/legacy telemetry fallback
+    // Rowing/legacy telemetry fallback (also a complete frame)
     D.RepTimeSec     = FCString::Atof(*Parts[0]);
     D.ElapsedSeconds = FCString::Atof(*Parts[1]);
     D.PullDistance   = (int32)FCString::Atof(*Parts[2]);
 
-    OwnerComp->ThreadSafe_UpdateData(D);
+    OwnerComp->ThreadSafe_ReplaceSnapshot(D);
 }
 
 void FErgReaderThread::ParseJsonLine(const FString& Line)
@@ -289,29 +292,32 @@ void FErgReaderThread::ParseJsonLine(const FString& Line)
         float Elapsed    = FCString::Atof(*GetField(TEXT("elapsedSec")));
         FString StatusTxt = GetField(TEXT("statusText"));
 
-        // Extended BLE telemetry fields (rowing / cycling)
-        float StrokeRateVal  = FCString::Atof(*GetField(TEXT("strokeRate")));
-        float PowerWattsVal  = FCString::Atof(*GetField(TEXT("powerWatts")));
-        float PaceSecVal     = FCString::Atof(*GetField(TEXT("paceSec500m")));
-
-        // Strength fields that may also appear in a unified status frame
-        int32 RepCnt         = FCString::Atoi(*GetField(TEXT("repCount")));
-        float DriveTime      = FCString::Atof(*GetField(TEXT("driveTimeSec")));
-        int32 PullDst        = FCString::Atoi(*GetField(TEXT("pullDistance")));
+        // Streaming telemetry fields — populated by the bridge every poll cycle.
+        // All are assigned directly into the struct with NO zero-guards so that
+        // a legitimately idle device (0 cadence, 0 watts) reaches SharedData.
+        // ThreadSafe_ReplaceSnapshot() will write them unconditionally.
+        float StrokeRateVal = FCString::Atof(*GetField(TEXT("strokeRate")));
+        float PowerWattsVal = FCString::Atof(*GetField(TEXT("powerWatts")));
+        float PaceSecVal    = FCString::Atof(*GetField(TEXT("paceSec500m")));
+        int32 RepCnt        = FCString::Atoi(*GetField(TEXT("repCount")));
+        float DriveTime     = FCString::Atof(*GetField(TEXT("driveTimeSec")));
+        int32 PullDst       = FCString::Atoi(*GetField(TEXT("pullDistance")));
 
         FErgData D;
         D.bIsConnected   = bConnected;
+        D.bIsActive      = RepCnt > 0;
         D.HeartRate      = HR;
         D.ElapsedSeconds = Elapsed;
         D.StatusText     = StatusTxt.IsEmpty() ? TEXT("BLE status") : StatusTxt;
         D.StrokeRate     = StrokeRateVal;
         D.PowerWatts     = PowerWattsVal;
         D.PaceSecPer500m = PaceSecVal;
-        if (RepCnt  > 0) { D.RepCount     = RepCnt;    D.bIsActive = true; }
-        if (DriveTime > 0) D.RepTimeSec   = DriveTime;
-        if (PullDst > 0)   D.PullDistance = PullDst;
+        D.RepCount       = RepCnt;
+        D.RepTimeSec     = DriveTime;
+        D.PullDistance   = PullDst;
 
-        OwnerComp->ThreadSafe_UpdateData(D);
+        // Status frame is a complete snapshot — every field is authoritative.
+        OwnerComp->ThreadSafe_ReplaceSnapshot(D);
     }
 }
 
@@ -433,22 +439,54 @@ void UErgManagerComponent::EndPlay(const EEndPlayReason::Type EndPlayReason)
     Super::EndPlay(EndPlayReason);
 }
 
+void UErgManagerComponent::ThreadSafe_ReplaceSnapshot(const FErgData& Snapshot)
+{
+    FScopeLock Lock(&DataLock);
+
+    // These fields are authoritative in every frame, connected or not.
+    SharedData.bIsConnected = Snapshot.bIsConnected;
+    SharedData.bIsActive    = Snapshot.bIsActive;
+    if (!Snapshot.StatusText.IsEmpty())
+        SharedData.StatusText = Snapshot.StatusText;
+
+    // Disconnected: clear all live streaming fields immediately.
+    // Rep history (RepCount/RepTimeSec/PullDistance) is preserved because it
+    // represents completed work, not a live stream, and clearing it on a brief
+    // BLE blip would corrupt the strength rep history mid-session.
+    if (!Snapshot.bIsConnected)
+    {
+        SharedData.StrokeRate     = 0.f;
+        SharedData.PowerWatts     = 0.f;
+        SharedData.PaceSecPer500m = 0.f;
+        SharedData.ElapsedSeconds = 0.f;
+        SharedData.HeartRate      = 0;
+        return;
+    }
+
+    // Connected snapshot: assign ALL fields directly.
+    // Zero IS a valid measurement here — a resting rower has 0 cadence and 0 watts,
+    // and the HUD must show that truth, not the last active value.
+    SharedData.StrokeRate     = Snapshot.StrokeRate;
+    SharedData.PowerWatts     = Snapshot.PowerWatts;
+    SharedData.PaceSecPer500m = Snapshot.PaceSecPer500m;
+    SharedData.ElapsedSeconds = Snapshot.ElapsedSeconds;
+    SharedData.HeartRate      = Snapshot.HeartRate;
+    SharedData.RepCount       = Snapshot.RepCount;
+    SharedData.RepTimeSec     = Snapshot.RepTimeSec;
+    SharedData.PullDistance   = Snapshot.PullDistance;
+}
+
 void UErgManagerComponent::ThreadSafe_UpdateData(const FErgData& NewData)
 {
     FScopeLock Lock(&DataLock);
 
-    // Connection state and status text always update, regardless of other fields.
+    // These fields are authoritative in every frame, connected or not.
     SharedData.bIsConnected = NewData.bIsConnected;
     SharedData.bIsActive    = NewData.bIsActive;
     if (!NewData.StatusText.IsEmpty())
         SharedData.StatusText = NewData.StatusText;
 
-    // ── Disconnected: clear live streaming fields immediately ───────────────
-    // When bIsConnected=false (TCP drop, BLE loss, or explicit bridge status),
-    // zero out all time-varying values so the HUD never shows stale data as live.
-    // Rep history fields (RepCount, RepTimeSec, PullDistance) are intentionally
-    // preserved — they represent completed work events, not a live stream.
-    // They will reset naturally when a new workout session begins.
+    // Disconnected: same clear as ReplaceSnapshot.
     if (!NewData.bIsConnected)
     {
         SharedData.StrokeRate     = 0.f;
@@ -459,18 +497,18 @@ void UErgManagerComponent::ThreadSafe_UpdateData(const FErgData& NewData)
         return;
     }
 
-    // ── Connected: merge non-zero values (partial-update protection) ────────
-    // The bridge sends complete status lines every ~250 ms, but rep events are
-    // sparse and may arrive before the next status line.  Keeping the last
-    // non-zero value prevents flickering to 0 between two consecutive polls.
+    // Connected sparse event (rep event or connection housekeeping):
+    // Only update rep-specific fields and supplemental context (HR, elapsed).
+    // StrokeRate / PowerWatts / PaceSecPer500m are intentionally NOT touched here —
+    // a rep event carries zeros for those fields because they are absent from the
+    // rep JSON, and writing those zeros would wipe the last good snapshot value
+    // for the fraction of a second before the next status frame arrives.
     if (NewData.RepCount       > 0) SharedData.RepCount       = NewData.RepCount;
     if (NewData.RepTimeSec     > 0) SharedData.RepTimeSec     = NewData.RepTimeSec;
     if (NewData.PullDistance   > 0) SharedData.PullDistance   = NewData.PullDistance;
     if (NewData.ElapsedSeconds > 0) SharedData.ElapsedSeconds = NewData.ElapsedSeconds;
     if (NewData.HeartRate      > 0) SharedData.HeartRate      = NewData.HeartRate;
-    if (NewData.StrokeRate     > 0) SharedData.StrokeRate     = NewData.StrokeRate;
-    if (NewData.PowerWatts     > 0) SharedData.PowerWatts     = NewData.PowerWatts;
-    if (NewData.PaceSecPer500m > 0) SharedData.PaceSecPer500m = NewData.PaceSecPer500m;
+    // StrokeRate, PowerWatts, PaceSecPer500m: owned by ThreadSafe_ReplaceSnapshot only.
 }
 
 void UErgManagerComponent::ThreadSafe_EnqueueRep(int32 Num, float Time, int32 Dist)

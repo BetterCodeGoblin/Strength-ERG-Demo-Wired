@@ -164,7 +164,22 @@ public:
 
     // ── Called by reader thread (thread-safe writes) ─────────────────────────
 
+    /**
+     * Full telemetry snapshot — called for every "status" JSON frame and every CSV
+     * telemetry frame.  When connected, ALL live fields are assigned directly;
+     * zero is a valid measurement and will overwrite the previous value.
+     * When disconnected, all live streaming fields are cleared.
+     */
+    void ThreadSafe_ReplaceSnapshot(const FErgData& Snapshot);
+
+    /**
+     * Sparse event merge — called for "rep" JSON frames and connection housekeeping.
+     * Only updates fields that are non-zero in the incoming data so that a rep event
+     * arriving between two status frames does not wipe the current streaming values
+     * (StrokeRate, PowerWatts, PaceSecPer500m) back to zero.
+     */
     void ThreadSafe_UpdateData(const FErgData& NewData);
+
     void ThreadSafe_EnqueueRep(int32 Num, float Time, int32 Dist);
 
 private:

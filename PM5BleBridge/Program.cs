@@ -6,14 +6,16 @@
 // What it does:
 //   1. Reads slot config from pm5_slots.json (auto-creates defaults if missing).
 //   2. Starts three TCP listeners (default ports 6789 / 6791 / 6792).
-//   3. Scans Bluetooth LE for devices whose advertised name starts with "PM5 ".
-//   4. Assigns each found PM5 to the first unoccupied slot (or by pm5Name config).
+//   3. Scans Bluetooth LE for Concept2 devices using C2DevicePrefixes list.
+//   4. Assigns each found device to the first unoccupied slot (or by pm5Name config).
 //   5. Polls each device with CSAFE frames over BLE GATT at ~4 Hz.
 //   6. Streams JSON telemetry lines to the Unreal TCP client on each slot's port.
 //
 // Usage:
 //   PM5BleBridge.exe                   — use pm5_slots.json defaults
-//   PM5BleBridge.exe --list-devices    — scan and print found PM5s without connecting
+//   PM5BleBridge.exe --list-devices    — scan and print ALL named BLE devices for 10 s,
+//                                        tagged [ACCEPTED] or [skipped] so you can spot
+//                                        new prefixes that need adding to C2DevicePrefixes
 //
 // Before running:
 //   * Enable Bluetooth on your laptop.
@@ -59,6 +61,13 @@ var cts          = new CancellationTokenSource();
 
 Console.CancelKeyPress += (_, e) => { e.Cancel = true; cts.Cancel(); };
 
+// ?? Concept2 device name prefixes ???????????????????????????????????????????
+// All Concept2 ergometers advertise over BLE with a short name prefix.
+// Known prefixes (add here if a new device type is spotted via --list-devices):
+//   "PM5 " — RowErg, BikeErg, SkiErg (standard Performance Monitor 5)
+//   "STR " — StrengthErg (confirmed: "STR 440000370")
+string[] c2DevicePrefixes = ["PM5 ", "STR "];
+
 // ?? BLE advertisement watcher ????????????????????????????????????????????????
 var watcher = new BluetoothLEAdvertisementWatcher
 {
@@ -69,21 +78,31 @@ watcher.Received += (_, args) =>
 {
     string name = args.Advertisement.LocalName;
     if (string.IsNullOrEmpty(name)) return;
-    if (!name.StartsWith("PM5 ", StringComparison.OrdinalIgnoreCase)) return;
+
+    // Check name against the known Concept2 prefix list.
+    string? matchedPrefix = c2DevicePrefixes
+        .FirstOrDefault(p => name.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+    bool isC2Device = matchedPrefix is not null;
 
     ulong addr = args.BluetoothAddress;
 
     lock (assignedLock)
     {
-        if (assigned.ContainsKey(addr)) return;  // already assigned
-
         if (listOnly)
         {
-            Console.WriteLine($"  Found PM5: \"{name}\"  RSSI={args.RawSignalStrengthInDBm} dBm  addr={addr:X12}");
+            // Show ALL named BLE devices so the user can spot any Concept2 device
+            // advertising with a prefix not yet in c2DevicePrefixes.
+            string tag = isC2Device ? "[ACCEPTED]" : "[skipped] ";
+            Console.WriteLine(
+                $"  {tag}  \"{name}\"  RSSI={args.RawSignalStrengthInDBm} dBm  addr={addr:X12}"
+                + (isC2Device ? $"  prefix=\"{matchedPrefix}\"" : ""));
             return;
         }
 
-        // Find an unoccupied slot that accepts this device
+        if (!isC2Device) return;          // not a Concept2 device — ignore silently
+        if (assigned.ContainsKey(addr)) return;  // already assigned
+
+        // Find an unoccupied slot that accepts this device.
         ChannelServer? slot = null;
         foreach (var srv in servers)
         {
@@ -98,16 +117,19 @@ watcher.Received += (_, args) =>
 
         if (slot == null)
         {
-            Console.WriteLine($"[Scan] Found PM5 \"{name}\" but no free slot accepts it — ignoring.");
+            Console.WriteLine(
+                $"[Scan] Concept2 device \"{name}\" found but no free slot accepts it — ignoring.");
             return;
         }
 
         assigned[addr] = slot.ChannelName;
         string assignMode = slot.IsPinned
-            ? $"pinned name match (\"{ slot.ConfiguredName}\")"
+            ? $"pinned name match (\"{slot.ConfiguredName}\")"
             : "auto-assigned (discovery order — consider pinning in pm5_slots.json)";
-        Console.WriteLine($"[Scan] PM5 \"{name}\"  RSSI={args.RawSignalStrengthInDBm} dBm");
-        Console.WriteLine($"       ? [{slot.ChannelName}] port {slot.Port}  [{assignMode}]");
+        Console.WriteLine(
+            $"[Scan] \"{name}\"  prefix=\"{matchedPrefix}\"  RSSI={args.RawSignalStrengthInDBm} dBm");
+        Console.WriteLine(
+            $"       ? [{slot.ChannelName}] port {slot.Port}  [{assignMode}]");
 
         var device = new PM5BleDevice(name, addr, slot);
         activeTasks[addr] = ConnectWithRetryAsync(device, addr, cts.Token);

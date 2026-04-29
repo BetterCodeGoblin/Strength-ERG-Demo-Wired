@@ -84,6 +84,9 @@ internal static class CsafeHelper
         if (stop < 0) return null;
 
         int pos = start + 1;
+        // BLE CSAFE responses include a status byte after START (high bit set, e.g. 0x80/0x81).
+        // Skip it so we land on the first real command ID.
+        if (pos < stop && (buf[pos] & 0x80) != 0) pos++;
         while (pos < stop - 1)
         {
             if (pos >= buf.Length) break;
@@ -112,6 +115,8 @@ internal static class CsafeHelper
 
         int pos   = start + 1;
         int limit = Math.Min(buf.Length, start + 128);
+        // Skip CSAFE response status byte if present (high bit set, e.g. 0x01/0x81).
+        if (pos < limit && (buf[pos] & 0x80) == 0 && buf[pos] != CMD_WRAPPER) pos++;
 
         while (pos < limit)
         {
@@ -156,6 +161,24 @@ internal static class CsafeHelper
     /// <summary>GETTWORK response: [hours, minutes, seconds] ? total seconds.</summary>
     public static float ParseElapsed(byte[] d) =>
         d.Length >= 3 ? d[0] * 3600f + d[1] * 60f + d[2] : 0f;
+
+    /// <summary>
+    /// Returns a human-readable label for a CE060080 multiplexed selector byte.
+    /// The selector byte equals the lower byte of the CE06xx characteristic UUID.
+    /// </summary>
+    public static string MuxSelectorLabel(byte sel) => sel switch
+    {
+        0x31 => "GeneralStatus",
+        0x32 => "AdditionalStatus1",
+        0x33 => "AdditionalStatus2",
+        0x34 => "StrokeData1",
+        0x35 => "StrokeData",
+        0x36 => "ForcePlot",
+        0x37 => "HeartRateBelt",
+        0x3D => "WorkoutSummary",
+        0x3E => "WorkoutSummaryData",
+        _    => $"Unknown-0x{sel:X2}"
+    };
 
     /// <summary>
     /// Standard C2 rowing pace formula.

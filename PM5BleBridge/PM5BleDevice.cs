@@ -204,27 +204,47 @@ internal class PM5BleDevice
         {
             var wt = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_WORK);
             if (wt?.Length >= 3)
+            {
                 _elapsed = wt[0] * 3600f + wt[1] * 60f + wt[2];
+                Console.WriteLine(
+                    $"[{Channel.ChannelName}] CSAFE GETTWORK ? {wt[0]}h {wt[1]}m {wt[2]}s " +
+                    $"= {_elapsed:F0}s elapsed");
+            }
 
             var hr = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_HR);
-            if (hr?.Length >= 1) _hr = hr[0];
+            if (hr?.Length >= 1)
+            {
+                _hr = hr[0];
+                Console.WriteLine($"[{Channel.ChannelName}] CSAFE GETHRCUR ? {_hr} BPM");
+            }
 
             var ss = CsafeHelper.ExtractProprietarySubCmd(r, CsafeHelper.SUB_STROKE);
+            if (ss != null)
+            {
+                Console.WriteLine(
+                    $"[{Channel.ChannelName}] CSAFE STROKESTATS raw [{ss.Length}]: " +
+                    BitConverter.ToString(ss));
+            }
             if (ss?.Length >= 7)
             {
                 float dt = ss[2] * 0.01f;
                 int   pd = ss[5];
                 int   rc = ss[6];
+                Console.WriteLine(
+                    $"[{Channel.ChannelName}] CSAFE STROKESTATS ? dt={dt:F2}s pd={pd}cm rc={rc} " +
+                    $"(lastRep={lastRep})");
                 if (rc > 0 && rc > lastRep)
                 {
                     lastRep = rc;
-                    Channel.Send(
+                    _lastRep = rc;
+                    string json =
                         $"{{\"type\":\"rep\",\"repCount\":{rc}," +
                         $"\"driveTimeSec\":{dt:F3},\"pullDistance\":{pd}," +
                         $"\"heartRate\":{_hr},\"elapsedSec\":{_elapsed:F2}," +
-                        $"\"connected\":true}}");
+                        $"\"connected\":true}}";
                     Console.WriteLine(
-                        $"[{Channel.ChannelName}] Rep #{rc}: dt={dt:F2}s pd={pd}");
+                        $"[{Channel.ChannelName}] EMIT rep#{rc} ? {json}");
+                    Channel.Send(json);
                 }
             }
         }
@@ -339,12 +359,18 @@ internal class PM5BleDevice
         if (d.Length < 2) return;
         byte   sel   = d[0];
         byte[] inner = d[1..];
-        if      (sel == 0x20 && inner.Length >= 10) OnGenStatus(inner);
+        string label = CsafeHelper.MuxSelectorLabel(sel);
+
+        Console.WriteLine(
+            $"[{Channel.ChannelName}] CE060080 mux sel=0x{sel:X2} ({label}) len={d.Length}: " +
+            BitConverter.ToString(d, 0, Math.Min(d.Length, 6)));
+
+        // Route only selectors whose byte layout we know to local decoders.
+        // CE060035 StrokeData and CE060031 GeneralStatus are also subscribed directly
+        // (authoritative); mux just gives us a second copy.
+        if      (sel == 0x31 && inner.Length >= 10) OnGenStatus(inner);
         else if (sel == 0x35 && inner.Length >= 17) OnStroke(inner);
-        else
-            Console.WriteLine(
-                $"[{Channel.ChannelName}] CE060080 sel=0x{sel:X2} len={d.Length}: " +
-                BitConverter.ToString(d, 0, Math.Min(d.Length, 8)));
+        // 0x32/0x33/0x3E etc. are logged above; rely on direct CE060035/CE060031 subs.
     }
 
     private void OnStroke(byte[] d)
@@ -374,14 +400,15 @@ internal class PM5BleDevice
         if (cnt > _lastRep)
         {
             _lastRep = cnt;
-            Channel.Send(
+            string json =
                 $"{{\"type\":\"rep\",\"repCount\":{cnt}," +
                 $"\"driveTimeSec\":{dt:F3},\"pullDistance\":{len}," +
                 $"\"heartRate\":{_hr},\"elapsedSec\":{elapsed:F2}," +
-                $"\"connected\":true}}");
+                $"\"connected\":true}}";
             Console.WriteLine(
-                $"[{Channel.ChannelName}] Stroke #{cnt}: " +
-                $"dt={dt:F2}s len={len}cm spm={spm} pwr={pwr:F0}W");
+                $"[{Channel.ChannelName}] EMIT stroke#{cnt}: " +
+                $"dt={dt:F2}s len={len}cm spm={spm} pwr={pwr:F0}W ? {json}");
+            Channel.Send(json);
         }
     }
 
@@ -407,7 +434,7 @@ internal class PM5BleDevice
     private void EmitStatus(bool connected, string text = "", int repCount = -1)
     {
         int rc = repCount >= 0 ? repCount : Math.Max(0, _lastRep);
-        Channel.Send(
+        string json =
             $"{{\"type\":\"status\"," +
             $"\"connected\":{(connected ? "true" : "false")}," +
             $"\"strokeRate\":{_spm:F1}," +
@@ -418,7 +445,11 @@ internal class PM5BleDevice
             $"\"repCount\":{rc}," +
             $"\"driveTimeSec\":0," +
             $"\"pullDistance\":0," +
-            $"\"statusText\":\"{Esc(text)}\"}}");
+            $"\"statusText\":\"{Esc(text)}\"}}";
+        Console.WriteLine(
+            $"[{Channel.ChannelName}] EMIT status spm={_spm:F0} pwr={_power:F0}W " +
+            $"hr={_hr} el={_elapsed:F0}s rc={rc}");
+        Channel.Send(json);
     }
 
     // ?? CSAFE write ???????????????????????????????????????????????????????????

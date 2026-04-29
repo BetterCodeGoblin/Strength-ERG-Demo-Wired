@@ -43,6 +43,32 @@ struct STRENGTHERG_API FErgData
     /** Human-readable status string for HUD display. */
     UPROPERTY(BlueprintReadOnly, Category = "ERG")
     FString StatusText = TEXT("Disconnected");
+
+    // ── Rowing / Cycling telemetry (populated by BLE bridge) ───────────────
+
+    /** Current stroke rate (strokes/min for rowing) or cadence (RPM for cycling). */
+    UPROPERTY(BlueprintReadOnly, Category = "ERG")
+    float StrokeRate = 0.f;
+
+    /** Current power output in watts (rowing + cycling). */
+    UPROPERTY(BlueprintReadOnly, Category = "ERG")
+    float PowerWatts = 0.f;
+
+    /** Rowing pace in seconds per 500 m. Derived from PowerWatts when not directly provided. */
+    UPROPERTY(BlueprintReadOnly, Category = "ERG")
+    float PaceSecPer500m = 0.f;
+};
+
+/**
+ * Identifies which physical device channel an UErgManagerComponent represents.
+ * Used for log tagging, thread naming, and DeviceLab display routing.
+ */
+UENUM(BlueprintType)
+enum class EDeviceChannel : uint8
+{
+    Strength    UMETA(DisplayName = "Strength (PM5 HID)"),
+    Rowing      UMETA(DisplayName = "Rowing Erg"),
+    Cycling     UMETA(DisplayName = "Cycling Erg")
 };
 
 /**

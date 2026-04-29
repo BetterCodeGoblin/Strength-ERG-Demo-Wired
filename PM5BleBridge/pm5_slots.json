@@ -1,0 +1,10 @@
+{
+  "_comment": "PM5BleBridge slot configuration. Edit pm5Name to pin a specific device to a slot.",
+  "_comment2": "pm5Name can be a full name like 'PM5 112233' or a partial match like '112233'.",
+  "_comment3": "Leave pm5Name empty to auto-assign by discovery order (first found = Strength, etc.).",
+  "slots": [
+    { "channel": "Strength", "port": 6789, "pm5Name": "" },
+    { "channel": "Rowing",   "port": 6791, "pm5Name": "" },
+    { "channel": "Cycling",  "port": 6792, "pm5Name": "" }
+  ]
+}

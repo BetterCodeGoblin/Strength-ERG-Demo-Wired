@@ -17,6 +17,55 @@
 #include "Misc/Parse.h"
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  UErgManagerComponent — channel helpers (defined before thread uses them)
+// ─────────────────────────────────────────────────────────────────────────────
+
+FString UErgManagerComponent::ChannelTag() const
+{
+    switch (DeviceChannel)
+    {
+        case EDeviceChannel::Rowing:   return TEXT("[Rowing]");
+        case EDeviceChannel::Cycling:  return TEXT("[Cycling]");
+        case EDeviceChannel::Strength: // fall through
+        default:                       return TEXT("[Strength]");
+    }
+}
+
+FString UErgManagerComponent::GetDebugLine() const
+{
+    const FErgData& D = LatestData;
+    switch (DeviceChannel)
+    {
+        case EDeviceChannel::Rowing:
+            return FString::Printf(
+                TEXT("[Rowing]   Connected:%s | StrokeRate:%.1f spm | Pace:%.0fs/500m | Power:%.0fW | Elapsed:%.0fs"),
+                D.bIsConnected ? TEXT("Y") : TEXT("N"),
+                D.StrokeRate,
+                D.PaceSecPer500m,
+                D.PowerWatts,
+                D.ElapsedSeconds);
+
+        case EDeviceChannel::Cycling:
+            return FString::Printf(
+                TEXT("[Cycling]  Connected:%s | Cadence:%.0f rpm | Power:%.0fW | Elapsed:%.0fs"),
+                D.bIsConnected ? TEXT("Y") : TEXT("N"),
+                D.StrokeRate,
+                D.PowerWatts,
+                D.ElapsedSeconds);
+
+        case EDeviceChannel::Strength: // fall through
+        default:
+            return FString::Printf(
+                TEXT("[Strength] Connected:%s | Reps:%d | RepTime:%.2fs | PullDist:%d | Elapsed:%.0fs"),
+                D.bIsConnected ? TEXT("Y") : TEXT("N"),
+                D.RepCount,
+                D.RepTimeSec,
+                D.PullDistance,
+                D.ElapsedSeconds);
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  FErgReaderThread
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -50,13 +99,13 @@ uint32 FErgReaderThread::Run()
 
         if (!bIsValid || !Sock->Connect(*Addr))
         {
-            UE_LOG(LogTemp, Warning, TEXT("[ErgBridge] Connection failed, retrying in 3s..."));
+            UE_LOG(LogTemp, Warning, TEXT("%s Connection failed, retrying in 3s..."), *OwnerComp->ChannelTag());
             SS->DestroySocket(Sock);
             FPlatformProcess::Sleep(3.f);
             continue;
         }
 
-        UE_LOG(LogTemp, Log, TEXT("[ErgBridge] Connected on port %d"), OwnerComp->BridgePortInternal);
+        UE_LOG(LogTemp, Log, TEXT("%s Connected on port %d"), *OwnerComp->ChannelTag(), OwnerComp->BridgePortInternal);
 
         {
             FErgData D;
@@ -124,7 +173,7 @@ uint32 FErgReaderThread::Run()
 
         if (bRunning && OwnerComp->bReading)
         {
-            UE_LOG(LogTemp, Warning, TEXT("[ErgBridge] Disconnected, reconnecting in 3s..."));
+            UE_LOG(LogTemp, Warning, TEXT("%s Disconnected, reconnecting in 3s..."), *OwnerComp->ChannelTag());
             FPlatformProcess::Sleep(3.f);
         }
     }
@@ -231,11 +280,27 @@ void FErgReaderThread::ParseJsonLine(const FString& Line)
         float Elapsed    = FCString::Atof(*GetField(TEXT("elapsedSec")));
         FString StatusTxt = GetField(TEXT("statusText"));
 
+        // Extended BLE telemetry fields (rowing / cycling)
+        float StrokeRateVal  = FCString::Atof(*GetField(TEXT("strokeRate")));
+        float PowerWattsVal  = FCString::Atof(*GetField(TEXT("powerWatts")));
+        float PaceSecVal     = FCString::Atof(*GetField(TEXT("paceSec500m")));
+
+        // Strength fields that may also appear in a unified status frame
+        int32 RepCnt         = FCString::Atoi(*GetField(TEXT("repCount")));
+        float DriveTime      = FCString::Atof(*GetField(TEXT("driveTimeSec")));
+        int32 PullDst        = FCString::Atoi(*GetField(TEXT("pullDistance")));
+
         FErgData D;
         D.bIsConnected   = bConnected;
         D.HeartRate      = HR;
         D.ElapsedSeconds = Elapsed;
         D.StatusText     = StatusTxt.IsEmpty() ? TEXT("BLE status") : StatusTxt;
+        D.StrokeRate     = StrokeRateVal;
+        D.PowerWatts     = PowerWattsVal;
+        D.PaceSecPer500m = PaceSecVal;
+        if (RepCnt  > 0) { D.RepCount     = RepCnt;    D.bIsActive = true; }
+        if (DriveTime > 0) D.RepTimeSec   = DriveTime;
+        if (PullDst > 0)   D.PullDistance = PullDst;
 
         OwnerComp->ThreadSafe_UpdateData(D);
     }
@@ -275,13 +340,14 @@ void UErgManagerComponent::BeginPlay()
     }
 
     BridgePortInternal = bUseBleWireless ? 6790 : BridgePort;
-    bBleMode           = bUseBleWireless;
+    bBleMode           = bUseBleWireless || bUseJsonFormat;
     bReading           = true;
 
     LaunchBridgeProcess();
 
     ReaderRunnable = new FErgReaderThread(this);
-    ReaderThread   = FRunnableThread::Create(ReaderRunnable, TEXT("ErgReaderThread"),
+    FString ThreadName = FString::Printf(TEXT("ErgReaderThread_%s"), *ChannelTag());
+    ReaderThread   = FRunnableThread::Create(ReaderRunnable, *ThreadName,
                                              0, TPri_BelowNormal);
 }
 
@@ -368,6 +434,9 @@ void UErgManagerComponent::ThreadSafe_UpdateData(const FErgData& NewData)
     if (NewData.PullDistance  > 0) SharedData.PullDistance  = NewData.PullDistance;
     if (NewData.ElapsedSeconds > 0) SharedData.ElapsedSeconds = NewData.ElapsedSeconds;
     if (NewData.HeartRate     > 0) SharedData.HeartRate     = NewData.HeartRate;
+    if (NewData.StrokeRate    > 0) SharedData.StrokeRate    = NewData.StrokeRate;
+    if (NewData.PowerWatts    > 0) SharedData.PowerWatts    = NewData.PowerWatts;
+    if (NewData.PaceSecPer500m > 0) SharedData.PaceSecPer500m = NewData.PaceSecPer500m;
 
     SharedData.bIsConnected = NewData.bIsConnected;
     SharedData.bIsActive    = NewData.bIsActive;
@@ -387,6 +456,14 @@ void UErgManagerComponent::ThreadSafe_EnqueueRep(int32 Num, float Time, int32 Di
 
 void UErgManagerComponent::LaunchBridgeProcess()
 {
+    // Empty path = another process (e.g. PM5BleBridge) owns this port. Skip silently.
+    if (BridgeExePath.IsEmpty())
+    {
+        UE_LOG(LogTemp, Log, TEXT("%s No bridge exe configured — expecting external process on port %d"),
+               *ChannelTag(), BridgePortInternal);
+        return;
+    }
+
     FString FullPath;
 
     if (FPaths::IsRelative(BridgeExePath))

@@ -89,6 +89,14 @@ public:
 
     // ── Inspector / Config ──────────────────────────────────────────────────
 
+    /**
+     * Which device this component instance represents.
+     * Controls the log prefix and thread name so three simultaneous instances
+     * never collide in UE's thread registry or output log.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+    EDeviceChannel DeviceChannel = EDeviceChannel::Strength;
+
     /** Path to PM5HidDiag.exe, relative to UE project root (or absolute). */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
     FString BridgeExePath = TEXT("../PM5HidDiag/bin/Release/net8.0-windows/PM5HidDiag.exe");
@@ -100,6 +108,15 @@ public:
     /** Use BLE bridge (JSON lines on port 6790) instead of wired CSV. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
     bool bUseBleWireless = false;
+
+    /**
+     * Parse incoming TCP data as JSON regardless of port.
+     * Set this true when using PM5BleBridge (which serves JSON on 6789/6791/6792).
+     * Does NOT change the port — use BridgePort for that.
+     * When bUseBleWireless is also true, that overrides the port to 6790.
+     */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Bridge")
+    bool bUseJsonFormat = false;
 
     /** Skip hardware; emit simulated data in Update. */
     UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Simulation")
@@ -129,6 +146,14 @@ public:
 
     UFUNCTION(BlueprintCallable, Category = "ERG")
     FErgData GetCurrentData() const { return LatestData; }
+
+    /** Returns a short tag like "[Strength]" for log messages and debug display. */
+    UFUNCTION(BlueprintCallable, Category = "ERG")
+    FString ChannelTag() const;
+
+    /** Returns a single-line debug string suitable for on-screen display. */
+    UFUNCTION(BlueprintCallable, Category = "ERG")
+    FString GetDebugLine() const;
 
     // ── UActorComponent interface ────────────────────────────────────────────
 

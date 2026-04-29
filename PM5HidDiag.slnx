@@ -1,3 +1,6 @@
 <Solution>
+  <Project Path="CyclingSimBridge/CyclingSimBridge.csproj" />
+  <Project Path="PM5BleBridge/PM5BleBridge.csproj" />
   <Project Path="PM5HidDiag/PM5HidDiag.csproj" />
+  <Project Path="RowingSimBridge/RowingSimBridge.csproj" />
 </Solution>

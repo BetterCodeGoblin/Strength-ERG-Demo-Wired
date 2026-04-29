@@ -70,3 +70,10 @@ Thumbs.db
 desktop.ini
 
 UE5/Saved/Config/WorldState/
+
+RowingSimBridge/bin/
+RowingSimBridge/obj/
+CyclingSimBridge/bin/
+CyclingSimBridge/obj/
+PM5BleBridge/bin/
+PM5BleBridge/obj/

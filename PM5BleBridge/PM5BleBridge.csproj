@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!--
+      net8.0-windows10.0.19041.0 is the minimum TFM that exposes
+      Windows.Devices.Bluetooth (WinRT) without extra NuGet packages.
+      19041 = Windows 10 May 2020 Update (20H1).
+    -->
+    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
+    <AssemblyName>PM5BleBridge</AssemblyName>
+    <RootNamespace>PM5BleBridge</RootNamespace>
+  </PropertyGroup>
+
+  <!-- Copy pm5_slots.json to output directory so it ships next to the exe -->
+  <ItemGroup>
+    <None Update="pm5_slots.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>

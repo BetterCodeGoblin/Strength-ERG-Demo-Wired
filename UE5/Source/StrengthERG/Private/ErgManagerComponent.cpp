@@ -34,6 +34,15 @@ FString UErgManagerComponent::ChannelTag() const
 FString UErgManagerComponent::GetDebugLine() const
 {
     const FErgData& D = LatestData;
+
+    // Disconnected: show status text loudly rather than a table of zeros.
+    // This makes it impossible to mistake a dead channel for a live one.
+    if (!D.bIsConnected)
+    {
+        FString Reason = D.StatusText.IsEmpty() ? TEXT("DISCONNECTED") : D.StatusText;
+        return FString::Printf(TEXT("%s *** %s ***"), *ChannelTag(), *Reason);
+    }
+
     switch (DeviceChannel)
     {
         case EDeviceChannel::Rowing:
@@ -428,20 +437,40 @@ void UErgManagerComponent::ThreadSafe_UpdateData(const FErgData& NewData)
 {
     FScopeLock Lock(&DataLock);
 
-    // Merge: don't overwrite non-zero cached values with zeros from partial updates
-    if (NewData.RepCount      > 0) SharedData.RepCount      = NewData.RepCount;
-    if (NewData.RepTimeSec    > 0) SharedData.RepTimeSec    = NewData.RepTimeSec;
-    if (NewData.PullDistance  > 0) SharedData.PullDistance  = NewData.PullDistance;
-    if (NewData.ElapsedSeconds > 0) SharedData.ElapsedSeconds = NewData.ElapsedSeconds;
-    if (NewData.HeartRate     > 0) SharedData.HeartRate     = NewData.HeartRate;
-    if (NewData.StrokeRate    > 0) SharedData.StrokeRate    = NewData.StrokeRate;
-    if (NewData.PowerWatts    > 0) SharedData.PowerWatts    = NewData.PowerWatts;
-    if (NewData.PaceSecPer500m > 0) SharedData.PaceSecPer500m = NewData.PaceSecPer500m;
-
+    // Connection state and status text always update, regardless of other fields.
     SharedData.bIsConnected = NewData.bIsConnected;
     SharedData.bIsActive    = NewData.bIsActive;
     if (!NewData.StatusText.IsEmpty())
         SharedData.StatusText = NewData.StatusText;
+
+    // ── Disconnected: clear live streaming fields immediately ───────────────
+    // When bIsConnected=false (TCP drop, BLE loss, or explicit bridge status),
+    // zero out all time-varying values so the HUD never shows stale data as live.
+    // Rep history fields (RepCount, RepTimeSec, PullDistance) are intentionally
+    // preserved — they represent completed work events, not a live stream.
+    // They will reset naturally when a new workout session begins.
+    if (!NewData.bIsConnected)
+    {
+        SharedData.StrokeRate     = 0.f;
+        SharedData.PowerWatts     = 0.f;
+        SharedData.PaceSecPer500m = 0.f;
+        SharedData.ElapsedSeconds = 0.f;
+        SharedData.HeartRate      = 0;
+        return;
+    }
+
+    // ── Connected: merge non-zero values (partial-update protection) ────────
+    // The bridge sends complete status lines every ~250 ms, but rep events are
+    // sparse and may arrive before the next status line.  Keeping the last
+    // non-zero value prevents flickering to 0 between two consecutive polls.
+    if (NewData.RepCount       > 0) SharedData.RepCount       = NewData.RepCount;
+    if (NewData.RepTimeSec     > 0) SharedData.RepTimeSec     = NewData.RepTimeSec;
+    if (NewData.PullDistance   > 0) SharedData.PullDistance   = NewData.PullDistance;
+    if (NewData.ElapsedSeconds > 0) SharedData.ElapsedSeconds = NewData.ElapsedSeconds;
+    if (NewData.HeartRate      > 0) SharedData.HeartRate      = NewData.HeartRate;
+    if (NewData.StrokeRate     > 0) SharedData.StrokeRate     = NewData.StrokeRate;
+    if (NewData.PowerWatts     > 0) SharedData.PowerWatts     = NewData.PowerWatts;
+    if (NewData.PaceSecPer500m > 0) SharedData.PaceSecPer500m = NewData.PaceSecPer500m;
 }
 
 void UErgManagerComponent::ThreadSafe_EnqueueRep(int32 Num, float Time, int32 Dist)

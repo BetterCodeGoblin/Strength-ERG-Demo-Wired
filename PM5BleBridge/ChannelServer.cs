@@ -85,6 +85,9 @@ internal class ChannelServer
         string.IsNullOrEmpty(ConfiguredName) ||
         advertisedName.Contains(ConfiguredName, StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>True when this slot has an explicit pm5Name configured.</summary>
+    public bool IsPinned => !string.IsNullOrEmpty(ConfiguredName);
+
     public void Stop()
     {
         _running = false;

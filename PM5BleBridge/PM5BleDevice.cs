@@ -62,6 +62,7 @@ internal class PM5BleDevice
 
     // ?? State ???????????????????????????????????????????????????????????????
     private int   _lastRepCount = -1;
+    private int   _lastLoggedElapsedSec = -1;   // prevents console spam (one log per 5-sec bucket)
     private bool  _stopRequested;
 
     public PM5BleDevice(string deviceName, ulong address, ChannelServer channel)
@@ -309,9 +310,11 @@ internal class PM5BleDevice
                 Console.WriteLine($"[{Channel.ChannelName}] Rep #{repCount}: {driveTimeSec:F2}s  dist={pullDist}");
             }
 
-            // ?? Debug console output (reduced frequency: every ~1 s) ????????
-            if ((int)(elapsed) % 5 == 0)
+            // ?? Debug console output (once per 5-second bucket, not every tick) ??
+            int elapsedSec = (int)elapsed;
+            if (elapsedSec % 5 == 0 && elapsedSec != _lastLoggedElapsedSec)
             {
+                _lastLoggedElapsedSec = elapsedSec;
                 Console.WriteLine($"[{Channel.ChannelName}] " +
                     $"SPM={strokeRate:F0} W={powerWatts:F0} HR={hr} " +
                     $"Rep={repCount} Elapsed={elapsed:F0}s");

@@ -25,6 +25,9 @@ void ARaceDeviceLabActor::OnRaceDeviceUpdated(EDeviceChannel Channel, FErgData D
         NormalisedSpeed = FMath::Clamp(Data.PowerWatts / FMath::Max(1.f, CyclingReferencePower), 0.f, 1.f);
         Detail = FString::Printf(TEXT("%0.0fW %0.0frpm"), Data.PowerWatts, Data.StrokeRate);
         if (TargetLane) TargetLane->SetNormalisedSpeed(NormalisedSpeed);
+        break;
+
+    case EDeviceChannel::Rowing:
         TargetLane = RowingLane;
         NormalisedSpeed = FMath::Clamp(Data.PowerWatts / FMath::Max(1.f, RowingReferencePower), 0.f, 1.f);
         Detail = FString::Printf(TEXT("%0.0fW %0.0fspm"), Data.PowerWatts, Data.StrokeRate);

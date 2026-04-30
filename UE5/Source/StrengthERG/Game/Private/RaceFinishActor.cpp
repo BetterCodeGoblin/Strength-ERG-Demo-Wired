@@ -3,6 +3,7 @@
 #include "RaceFinishActor.h"
 #include "RaceLaneActor.h"
 #include "RaceGameMode.h"
+#include "ErgTypes.h"
 #include "Components/BoxComponent.h"
 #include "Components/BillboardComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -51,6 +52,9 @@ void ARaceFinishActor::OnFinishOverlap(UPrimitiveComponent* /*OverlappedComp*/,
     ARaceGameMode* GM = Cast<ARaceGameMode>(
         UGameplayStatics::GetGameMode(this));
     if (!GM) return;
+
+    // Only count finish overlaps while the race is actually running
+    if (GM->RaceState != ERaceState::Racing) return;
 
     GM->NotifyLaneFinished(Lane->LaneChannel);
 

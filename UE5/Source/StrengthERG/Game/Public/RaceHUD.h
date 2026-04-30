@@ -29,6 +29,18 @@ public:
     UFUNCTION(BlueprintCallable, Category = "RaceHUD")
     void ShowWinner(EDeviceChannel WinnerChannel);
 
+    /** Show per-device readiness before the race starts. */
+    UFUNCTION(BlueprintCallable, Category = "RaceHUD")
+    void ShowWaiting(bool bCyclingReady, bool bRowingReady, bool bStrengthReady);
+
+    /** Display an integer countdown value (3, 2, 1, 0 = GO). */
+    UFUNCTION(BlueprintCallable, Category = "RaceHUD")
+    void ShowCountdown(int32 Value);
+
+    /** Hide countdown/waiting overlays - race is live. */
+    UFUNCTION(BlueprintCallable, Category = "RaceHUD")
+    void ShowRaceLive();
+
 protected:
     virtual void NativeConstruct() override;
 
@@ -39,6 +51,7 @@ private:
     TObjectPtr<UTextBlock> RowingText;
     TObjectPtr<UTextBlock> StrengthText;
     TObjectPtr<UTextBlock> WinnerText;
+    TObjectPtr<UTextBlock> CountdownText;
 
     void BuildLayout();
     UTextBlock* MakeText(UCanvasPanel* Canvas, FVector2D Position, FVector2D Alignment,

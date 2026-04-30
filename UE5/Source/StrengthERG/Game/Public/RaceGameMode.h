@@ -21,6 +21,15 @@
 class URaceHUD;
 class UUserWidget;
 
+UENUM(BlueprintType)
+enum class ERaceState : uint8
+{
+    Waiting    UMETA(DisplayName = "Waiting for Devices"),
+    Countdown  UMETA(DisplayName = "Countdown"),
+    Racing     UMETA(DisplayName = "Racing"),
+    Finished   UMETA(DisplayName = "Finished"),
+};
+
 UCLASS(Blueprintable, meta = (DisplayName = "Race Game Mode"))
 class STRENGTHERG_API ARaceGameMode : public AGameModeBase
 {
@@ -30,16 +39,28 @@ public:
     ARaceGameMode();
 
     virtual void BeginPlay() override;
+    virtual void Tick(float DeltaSeconds) override;
 
-    // ?? State ?????????????????????????????????????????????????????????????
+    // -- State ------------------------------------------------------------
+
+    UPROPERTY(BlueprintReadOnly, Category = "Race")
+    ERaceState RaceState = ERaceState::Waiting;
 
     /** True once the finish trigger has been hit by any lane. */
     UPROPERTY(BlueprintReadOnly, Category = "Race")
     bool bRaceFinished = false;
 
+    /** True once countdown reaches zero and racers are allowed to move. */
+    UPROPERTY(BlueprintReadOnly, Category = "Race")
+    bool bRaceStarted = false;
+
     /** Channel that crossed the finish first (valid only when bRaceFinished). */
     UPROPERTY(BlueprintReadOnly, Category = "Race")
     EDeviceChannel WinnerChannel = EDeviceChannel::Strength;
+
+    /** How many seconds the countdown lasts (default 3). */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Race")
+    float CountdownDuration = 3.f;
 
     // ?? Called by ARaceFinishActor ?????????????????????????????????????????
 
@@ -50,7 +71,14 @@ public:
     UFUNCTION(BlueprintCallable, Category = "Race")
     void NotifyLaneFinished(EDeviceChannel Channel);
 
-    // ?? Blueprint event � override in BP_RaceGameMode for HUD ?????????????
+    /**
+     * Called by the telemetry layer when a device connects or disconnects.
+     * Drives the Waiting -> Countdown transition.
+     */
+    UFUNCTION(BlueprintCallable, Category = "Race")
+    void NotifyDeviceConnected(EDeviceChannel Channel, bool bConnected);
+
+    // ?? Blueprint event
 
     /**
      * Fired once when a winner is determined.
@@ -67,4 +95,16 @@ public:
 
     UPROPERTY(BlueprintReadOnly, Category = "Race|HUD")
     TObjectPtr<URaceHUD> RaceHUD;
+
+private:
+    bool bCyclingReady  = false;
+    bool bRowingReady   = false;
+    bool bStrengthReady = false;
+
+    float CountdownRemaining = 0.f;
+
+    bool AllDevicesReady() const { return bCyclingReady && bRowingReady && bStrengthReady; }
+    void StartCountdown();
+    void BeginRace();
+    void PushReadyStateToHUD();
 };

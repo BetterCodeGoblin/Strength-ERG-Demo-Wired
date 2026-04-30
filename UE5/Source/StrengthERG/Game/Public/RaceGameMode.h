@@ -2,7 +2,7 @@
 /**
  * RaceGameMode.h
  *
- * Slice 1 – Race Map Foundation
+ * Slice 1 ï¿½ Race Map Foundation
  *
  * Minimal game mode for the three-lane PM5 race prototype.
  * Tracks whether the race is running and which lane won.
@@ -18,6 +18,9 @@
 #include "ErgTypes.h"
 #include "RaceGameMode.generated.h"
 
+class URaceHUD;
+class UUserWidget;
+
 UCLASS(Blueprintable, meta = (DisplayName = "Race Game Mode"))
 class STRENGTHERG_API ARaceGameMode : public AGameModeBase
 {
@@ -25,6 +28,8 @@ class STRENGTHERG_API ARaceGameMode : public AGameModeBase
 
 public:
     ARaceGameMode();
+
+    virtual void BeginPlay() override;
 
     // ?? State ?????????????????????????????????????????????????????????????
 
@@ -40,12 +45,12 @@ public:
 
     /**
      * Called the first time any lane actor overlaps the finish trigger.
-     * Safe to call multiple times – only the first call counts.
+     * Safe to call multiple times ï¿½ only the first call counts.
      */
     UFUNCTION(BlueprintCallable, Category = "Race")
     void NotifyLaneFinished(EDeviceChannel Channel);
 
-    // ?? Blueprint event – override in BP_RaceGameMode for HUD ?????????????
+    // ?? Blueprint event ï¿½ override in BP_RaceGameMode for HUD ?????????????
 
     /**
      * Fired once when a winner is determined.
@@ -53,4 +58,13 @@ public:
      */
     UFUNCTION(BlueprintImplementableEvent, Category = "Race")
     void OnRaceWon(EDeviceChannel Winner);
+
+    UFUNCTION(BlueprintCallable, Category = "Race|HUD")
+    void UpdateLaneHud(EDeviceChannel Channel, bool bConnected, float NormalisedSpeed, const FString& Detail);
+
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Race|HUD")
+    TSubclassOf<UUserWidget> RaceHUDClass;
+
+    UPROPERTY(BlueprintReadOnly, Category = "Race|HUD")
+    TObjectPtr<URaceHUD> RaceHUD;
 };

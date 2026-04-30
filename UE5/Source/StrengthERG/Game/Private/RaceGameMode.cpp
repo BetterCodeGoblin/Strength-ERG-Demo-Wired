@@ -1,16 +1,32 @@
-// RaceGameMode.cpp – Slice 1 Race Map Foundation
+// RaceGameMode.cpp - Slice 1/2 race map foundation + small HUD support
 
 #include "RaceGameMode.h"
+
 #include "Engine/Engine.h"
+#include "RaceHUD.h"
+#include "Blueprint/UserWidget.h"
 
 ARaceGameMode::ARaceGameMode()
 {
     PrimaryActorTick.bCanEverTick = false;
 }
 
+void ARaceGameMode::BeginPlay()
+{
+    Super::BeginPlay();
+
+    if (RaceHUDClass)
+    {
+        if (UUserWidget* Widget = CreateWidget<UUserWidget>(GetWorld(), RaceHUDClass))
+        {
+            Widget->AddToViewport();
+            RaceHUD = Cast<URaceHUD>(Widget);
+        }
+    }
+}
+
 void ARaceGameMode::NotifyLaneFinished(EDeviceChannel Channel)
 {
-    // Only the first caller wins.
     if (bRaceFinished) return;
 
     bRaceFinished  = true;
@@ -21,14 +37,25 @@ void ARaceGameMode::NotifyLaneFinished(EDeviceChannel Channel)
 
     UE_LOG(LogTemp, Warning, TEXT("[Race] Winner: %s"), *WinnerName);
 
-    // On-screen message visible even without a HUD widget.
     if (GEngine)
     {
         GEngine->AddOnScreenDebugMessage(
             99, 10.f, FColor::Yellow,
-            FString::Printf(TEXT("?? WINNER: %s!"), *WinnerName));
+            FString::Printf(TEXT("WINNER: %s!"), *WinnerName));
     }
 
-    // Fire Blueprint event so BP_RaceGameMode can show a proper banner.
+    if (RaceHUD)
+    {
+        RaceHUD->ShowWinner(Channel);
+    }
+
     OnRaceWon(Channel);
+}
+
+void ARaceGameMode::UpdateLaneHud(EDeviceChannel Channel, bool bConnected, float NormalisedSpeed, const FString& Detail)
+{
+    if (RaceHUD)
+    {
+        RaceHUD->SetLaneStatus(Channel, bConnected, NormalisedSpeed, Detail);
+    }
 }

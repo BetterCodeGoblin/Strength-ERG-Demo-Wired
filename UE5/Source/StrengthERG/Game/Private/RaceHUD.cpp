@@ -86,8 +86,10 @@ void URaceHUD::NativeConstruct()
 
     // Only build the layout if the asset doesn't already have a root widget
     // (i.e. the WBP canvas is empty — which it will be for a blank parent-class asset).
-    if (!WidgetTree->RootWidget)
-        BuildLayout();
+    // Always build from C++ so the Blueprint designer canvas never overrides
+    // the intended layout. Any default root widget added by the asset is
+    // replaced here - C++ is the single source of truth for placement.
+    BuildLayout();
 
     ShowWaiting(false, false, false);
 }

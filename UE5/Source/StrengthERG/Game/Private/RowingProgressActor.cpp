@@ -1,9 +1,34 @@
 #include "RowingProgressActor.h"
+#include "RowingProgressActor.h"
+#include "Components/StaticMeshComponent.h"
 #include "Math/UnrealMathUtility.h"
 
 ARowingProgressActor::ARowingProgressActor()
 {
     PrimaryActorTick.bCanEverTick = false;
+
+    ProgressMesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("ProgressMesh"));
+    SetRootComponent(ProgressMesh);
+    ProgressMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+}
+
+void ARowingProgressActor::BeginPlay()
+{
+    Super::BeginPlay();
+
+    ProgressMesh->SetRelativeScale3D(FVector(MeshScale));
+
+    if (bUpdateActorLocationFromProgress)
+    {
+        UpdateLocationFromProgress();
+    }
+}
+
+void ARowingProgressActor::OnConstruction(const FTransform& Transform)
+{
+    Super::OnConstruction(Transform);
+
+    ProgressMesh->SetRelativeScale3D(FVector(MeshScale));
 }
 
 void ARowingProgressActor::AddProgress(float Amount)
@@ -37,4 +62,11 @@ float ARowingProgressActor::GetProgressNormalized() const
 bool ARowingProgressActor::IsComplete() const
 {
     return TargetProgress > 0.f && CurrentProgress >= TargetProgress;
+}
+
+void ARowingProgressActor::UpdateLocationFromProgress()
+{
+    const float Alpha = GetProgressNormalized();
+    const FVector NewLocation = FMath::Lerp(StartLocation, EndLocation, Alpha);
+    SetActorLocation(NewLocation);
 }

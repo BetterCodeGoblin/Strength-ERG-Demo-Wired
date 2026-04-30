@@ -15,6 +15,9 @@ ABoulderGameMode::ABoulderGameMode()
     // Create sub-components owned by the GameMode actor
     ErgManager = CreateDefaultSubobject<UErgManagerComponent>(TEXT("ErgManager"));
     QTE        = CreateDefaultSubobject<UQTEComponent>(TEXT("QTE"));
+
+    // Let the engine spawn the HUD before BeginPlay; avoids UObject hash mutation at runtime.
+    HUDClass = AHudManager::StaticClass();
 }
 
 void ABoulderGameMode::BeginPlay()
@@ -37,17 +40,6 @@ void ABoulderGameMode::BeginPlay()
         PlayerChar->PushMontage = PushAnimationMontage;
         PlayerChar->InitializeCharacter();
         UE_LOG(LogTemp, Log, TEXT("[GameMode] Spawned PlayerCharacter"));
-    }
-
-    // Spawn HUD manager
-    AHudManager* HudMgr = GetWorld()->SpawnActor<AHudManager>();
-    if (HudMgr)
-    {
-        if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
-        {
-            PC->MyHUD = HudMgr;
-        }
-        UE_LOG(LogTemp, Log, TEXT("[GameMode] Spawned HudManager"));
     }
 
     ChangeState(EBoulderGameState::Idle);

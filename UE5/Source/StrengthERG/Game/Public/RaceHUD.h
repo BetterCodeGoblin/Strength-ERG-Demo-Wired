@@ -13,6 +13,7 @@
 
 class UTextBlock;
 class UWidget;
+class UBorder;
 
 UCLASS(Blueprintable, BlueprintType)
 class STRENGTHERG_API URaceHUD : public UUserWidget
@@ -37,6 +38,10 @@ public:
 
     UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> WinnerText;
+
+    /** Semi-transparent backing panel behind the three lane lines. */
+    UPROPERTY(meta = (BindWidgetOptional))
+    TObjectPtr<UBorder> LanePanel;
 
     UFUNCTION(BlueprintCallable, Category = "RaceHUD")
     void SetLaneStatus(EDeviceChannel Channel, bool bConnected, float NormalisedSpeed, const FString& Detail);

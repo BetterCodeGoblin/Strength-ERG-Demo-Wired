@@ -18,7 +18,7 @@ void ARaceGameMode::BeginPlay()
 {
     Super::BeginPlay();
 
-    if (RaceHUDClass)
+    if (RaceHUDClass && GetWorld() && GetWorld()->IsGameWorld())
     {
         if (UUserWidget* Widget = CreateWidget<UUserWidget>(GetWorld(), RaceHUDClass))
         {

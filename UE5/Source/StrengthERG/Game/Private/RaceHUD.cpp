@@ -1,5 +1,4 @@
 #include "RaceHUD.h"
-
 #include "RaceHUD.h"
 #include "Components/TextBlock.h"
 #include "Components/CanvasPanelSlot.h"
@@ -36,6 +35,13 @@ static void ApplyFont(UTextBlock* TB, int32 Size, bool bBold = false)
 
 void URaceHUD::NativeConstruct()
 {
+    // Guard: IsTemplate() is true for CDOs and archetype objects created during
+    // Hot Reload / Blueprint compilation. UUserWidget CDO construction calls
+    // CreateDefaultSubobject<UWidgetTree> which already touches the UObject hash;
+    // any further UObject or Slate operations here while the hash iterator is
+    // active will trigger the "FindOrAdd during iteration" fatal error.
+    if (IsTemplate()) return;
+
     Super::NativeConstruct();
 
     // BindWidget has already resolved all pointers from WBP_RaceHUD.

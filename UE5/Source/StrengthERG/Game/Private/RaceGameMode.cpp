@@ -11,6 +11,7 @@
 ARaceGameMode::ARaceGameMode()
 {
     PrimaryActorTick.bCanEverTick = true;
+    DefaultPawnClass = nullptr;
 }
 
 void ARaceGameMode::BeginPlay()

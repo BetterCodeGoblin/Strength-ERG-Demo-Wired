@@ -2,6 +2,7 @@
 
 #include "RaceHUD.h"
 #include "Components/TextBlock.h"
+#include "Components/CanvasPanelSlot.h"
 
 // -- Colour palette --------------------------------------------------------
 static const FLinearColor ColConnected    = FLinearColor(0.2f,  1.0f,  0.4f,  1.f);
@@ -9,19 +10,68 @@ static const FLinearColor ColDisconnected = FLinearColor(0.55f, 0.55f, 0.55f, 1.
 static const FLinearColor ColWinner       = FLinearColor(1.0f,  0.85f, 0.0f,  1.f);
 static const FLinearColor ColCountdown    = FLinearColor(1.0f,  0.95f, 0.95f, 1.f);
 
+// -- Helpers ---------------------------------------------------------------
+
+static void ApplySlot(UWidget* Widget, FVector2D AnchorXY, FVector2D Position, FVector2D Alignment)
+{
+    if (!Widget) return;
+    UCanvasPanelSlot* Slot = Cast<UCanvasPanelSlot>(Widget->Slot);
+    if (!Slot) return;
+    Slot->SetAnchors(FAnchors(AnchorXY.X, AnchorXY.Y));
+    Slot->SetPosition(Position);
+    Slot->SetAlignment(Alignment);
+    Slot->SetAutoSize(true);
+}
+
+static void ApplyFont(UTextBlock* TB, int32 Size, bool bBold = false)
+{
+    if (!TB) return;
+    FSlateFontInfo F = TB->GetFont();
+    F.Size = Size;
+    if (bBold) F.TypefaceFontName = FName("Bold");
+    TB->SetFont(F);
+}
+
 // -- NativeConstruct -------------------------------------------------------
 
 void URaceHUD::NativeConstruct()
 {
     Super::NativeConstruct();
-    // BindWidget resolves TitleText / CyclingText / RowingText / StrengthText
-    // / WinnerText from the named widgets already placed in WBP_RaceHUD.
-    // Layout and positioning are owned entirely by the Blueprint designer.
 
+    // BindWidget has already resolved all pointers from WBP_RaceHUD.
+    // Now enforce the intended screen positions via canvas slots so the
+    // Blueprint designer's default top-left placement is overridden.
+
+    // Title: top-center
+    ApplySlot(TitleText,    FVector2D(0.5f, 0.0f), FVector2D(  0.f,  36.f), FVector2D(0.5f, 0.0f));
+    ApplyFont(TitleText,    32, true);
+    if (TitleText) TitleText->SetText(FText::FromString(TEXT("First to the Flag")));
+
+    // Lane status lines: centered, below title
+    ApplySlot(CyclingText,  FVector2D(0.5f, 0.0f), FVector2D(  0.f, 108.f), FVector2D(0.5f, 0.0f));
+    ApplyFont(CyclingText,  20);
+    ApplySlot(RowingText,   FVector2D(0.5f, 0.0f), FVector2D(  0.f, 142.f), FVector2D(0.5f, 0.0f));
+    ApplyFont(RowingText,   20);
+    ApplySlot(StrengthText, FVector2D(0.5f, 0.0f), FVector2D(  0.f, 176.f), FVector2D(0.5f, 0.0f));
+    ApplyFont(StrengthText, 20);
+
+    // Winner: screen center, large gold, hidden until race ends
+    ApplySlot(WinnerText,   FVector2D(0.5f, 0.5f), FVector2D(  0.f, -80.f), FVector2D(0.5f, 0.5f));
+    ApplyFont(WinnerText,   56, true);
     if (WinnerText)
+    {
+        WinnerText->SetColorAndOpacity(FSlateColor(ColWinner));
         WinnerText->SetVisibility(ESlateVisibility::Collapsed);
+    }
+
+    // Countdown: screen center, very large, hidden until countdown starts
+    ApplySlot(CountdownText, FVector2D(0.5f, 0.5f), FVector2D( 0.f,   0.f), FVector2D(0.5f, 0.5f));
+    ApplyFont(CountdownText, 96, true);
     if (CountdownText)
+    {
+        CountdownText->SetColorAndOpacity(FSlateColor(ColCountdown));
         CountdownText->SetVisibility(ESlateVisibility::Collapsed);
+    }
 
     ShowWaiting(false, false, false);
 }

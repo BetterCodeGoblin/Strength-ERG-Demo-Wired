@@ -3,14 +3,13 @@
 /**
  * RaceHUD.h
  *
- * Binds to named TextBlock widgets already placed in WBP_RaceHUD.
- * The Blueprint designer owns layout/positioning - C++ drives data only.
- * Widget names must match the variable names below exactly (BindWidget).
+ * C++ owns the full widget layout: BuildLayout() constructs a root CanvasPanel
+ * and six TextBlock children at their intended centered positions.
+ * WBP_RaceHUD only needs URaceHUD set as its parent class -- no widget
+ * placement required in the Blueprint designer.
  *
- * Required widgets in WBP_RaceHUD:
- *   TitleText, CyclingText, RowingText, StrengthText, WinnerText
- * Optional (add to Blueprint for countdown display):
- *   CountdownText
+ * The five public functions drive all runtime data:
+ *   ShowWaiting / ShowCountdown / ShowRaceLive / ShowWinner / SetLaneStatus
  */
 
 #include "CoreMinimal.h"
@@ -19,6 +18,7 @@
 #include "RaceHUD.generated.h"
 
 class UTextBlock;
+class UCanvasPanel;
 
 UCLASS(Blueprintable, BlueprintType)
 class STRENGTHERG_API URaceHUD : public UUserWidget
@@ -44,27 +44,32 @@ public:
 protected:
     virtual void NativeConstruct() override;
 
-    // -- Bound to named widgets in WBP_RaceHUD ----------------------------
-
-    UPROPERTY(meta = (BindWidget))
+private:
+    // Widget pointers -- owned by BuildLayout(), tracked by GC via UPROPERTY.
+    // NOT BindWidget: C++ constructs these directly so no editor placement needed.
+    UPROPERTY()
     TObjectPtr<UTextBlock> TitleText;
 
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY()
     TObjectPtr<UTextBlock> CyclingText;
 
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY()
     TObjectPtr<UTextBlock> RowingText;
 
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY()
     TObjectPtr<UTextBlock> StrengthText;
 
-    UPROPERTY(meta = (BindWidget))
+    UPROPERTY()
     TObjectPtr<UTextBlock> WinnerText;
 
-    UPROPERTY(meta = (BindWidgetOptional))
+    UPROPERTY()
     TObjectPtr<UTextBlock> CountdownText;
 
-private:
+    // Builds the full widget tree. Idempotent -- only runs if TitleText is null.
+    void BuildLayout();
+    UTextBlock* MakeText(UCanvasPanel* Canvas, FVector2D Offset, FVector2D Anchor,
+                         const FString& Default, int32 Size, bool bBold = false);
+
     void UpdateLaneText(UTextBlock* Target, const FString& Label, bool bConnected,
                         float NormalisedSpeed, const FString& Detail);
 };

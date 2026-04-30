@@ -1,100 +1,32 @@
 #include "RaceHUD.h"
 
 #include "RaceHUD.h"
-
 #include "Components/TextBlock.h"
-#include "Components/Border.h"
-#include "Components/CanvasPanel.h"
-#include "Components/CanvasPanelSlot.h"
-#include "Blueprint/WidgetTree.h"
 
-// ?? Colour palette ????????????????????????????????????????????????????????????
+// -- Colour palette --------------------------------------------------------
 static const FLinearColor ColConnected    = FLinearColor(0.2f,  1.0f,  0.4f,  1.f);
 static const FLinearColor ColDisconnected = FLinearColor(0.55f, 0.55f, 0.55f, 1.f);
 static const FLinearColor ColWinner       = FLinearColor(1.0f,  0.85f, 0.0f,  1.f);
 static const FLinearColor ColCountdown    = FLinearColor(1.0f,  0.95f, 0.95f, 1.f);
-static const FLinearColor PanelTint       = FLinearColor(0.0f,  0.0f,  0.0f,  0.55f);
 
-// ?? Helpers ???????????????????????????????????????????????????????????????????
-
-UTextBlock* URaceHUD::MakeText(UCanvasPanel* Canvas, FVector2D Position, FVector2D Alignment,
-                                const FString& DefaultStr, int32 FontSize, bool bBold)
-{
-    UTextBlock* TB = WidgetTree->ConstructWidget<UTextBlock>();
-    TB->SetText(FText::FromString(DefaultStr));
-
-    FSlateFontInfo Font = TB->GetFont();
-    Font.Size = FontSize;
-    if (bBold)
-        Font.TypefaceFontName = FName("Bold");
-    TB->SetFont(Font);
-    TB->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-
-    UCanvasPanelSlot* CanvasSlot = Canvas->AddChildToCanvas(TB);
-    CanvasSlot->SetAnchors(FAnchors(Alignment.X, Alignment.Y));
-    CanvasSlot->SetPosition(Position);
-    CanvasSlot->SetAlignment(Alignment);
-    CanvasSlot->SetAutoSize(true);
-
-    return TB;
-}
-
-void URaceHUD::BuildLayout()
-{
-    UCanvasPanel* Canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
-    WidgetTree->RootWidget = Canvas;
-
-    // -- Title: top-center ------------------------------------------------
-    TitleText = MakeText(Canvas, FVector2D(0.f, 36.f), FVector2D(0.5f, 0.f),
-                         TEXT("First to the Flag"), 32, /*bBold=*/true);
-
-    // -- Backing panel: horizontally centered below the title -------------
-    UBorder* Panel = WidgetTree->ConstructWidget<UBorder>();
-    Panel->SetBrushColor(PanelTint);
-    UCanvasPanelSlot* PanelSlot = Canvas->AddChildToCanvas(Panel);
-    PanelSlot->SetAnchors(FAnchors(0.5f, 0.f));
-    PanelSlot->SetPosition(FVector2D(-230.f, 96.f));
-    PanelSlot->SetSize(FVector2D(460.f, 116.f));
-    PanelSlot->SetAlignment(FVector2D(0.f, 0.f));
-
-    // -- Lane status lines: centered top ----------------------------------
-    CyclingText  = MakeText(Canvas, FVector2D(0.f, 106.f), FVector2D(0.5f, 0.f),
-                            TEXT("Bike  --  waiting"), 20);
-    RowingText   = MakeText(Canvas, FVector2D(0.f, 140.f), FVector2D(0.5f, 0.f),
-                            TEXT("Row   --  waiting"), 20);
-    StrengthText = MakeText(Canvas, FVector2D(0.f, 174.f), FVector2D(0.5f, 0.f),
-                            TEXT("Push  --  waiting"), 20);
-
-    // -- Countdown text: screen center, large, hidden until needed --------
-    CountdownText = MakeText(Canvas, FVector2D(0.f, 0.f), FVector2D(0.5f, 0.5f),
-                             TEXT(""), 96, /*bBold=*/true);
-    CountdownText->SetColorAndOpacity(FSlateColor(ColCountdown));
-    CountdownText->SetVisibility(ESlateVisibility::Collapsed);
-
-    // -- Winner text: center screen, prominent, hidden until race ends ----
-    WinnerText = MakeText(Canvas, FVector2D(0.f, -80.f), FVector2D(0.5f, 0.5f),
-                          TEXT(""), 56, /*bBold=*/true);
-    WinnerText->SetColorAndOpacity(FSlateColor(ColWinner));
-    WinnerText->SetVisibility(ESlateVisibility::Collapsed);
-}
-
-// ?? NativeConstruct ???????????????????????????????????????????????????????????
+// -- NativeConstruct -------------------------------------------------------
 
 void URaceHUD::NativeConstruct()
 {
     Super::NativeConstruct();
+    // BindWidget resolves TitleText / CyclingText / RowingText / StrengthText
+    // / WinnerText from the named widgets already placed in WBP_RaceHUD.
+    // Layout and positioning are owned entirely by the Blueprint designer.
 
-    // Only build the layout if the asset doesn't already have a root widget
-    // (i.e. the WBP canvas is empty — which it will be for a blank parent-class asset).
-    // Always build from C++ so the Blueprint designer canvas never overrides
-    // the intended layout. Any default root widget added by the asset is
-    // replaced here - C++ is the single source of truth for placement.
-    BuildLayout();
+    if (WinnerText)
+        WinnerText->SetVisibility(ESlateVisibility::Collapsed);
+    if (CountdownText)
+        CountdownText->SetVisibility(ESlateVisibility::Collapsed);
 
     ShowWaiting(false, false, false);
 }
 
-// ?? Public API ????????????????????????????????????????????????????????????????
+// -- Public API ------------------------------------------------------------
 
 void URaceHUD::SetLaneStatus(EDeviceChannel Channel, bool bConnected, float NormalisedSpeed, const FString& Detail)
 {
@@ -162,6 +94,8 @@ void URaceHUD::ShowRaceLive()
     if (CountdownText)
         CountdownText->SetVisibility(ESlateVisibility::Collapsed);
 }
+
+// -- Private ---------------------------------------------------------------
 
 void URaceHUD::UpdateLaneText(UTextBlock* Target, const FString& Label, bool bConnected,
                                float NormalisedSpeed, const FString& Detail)

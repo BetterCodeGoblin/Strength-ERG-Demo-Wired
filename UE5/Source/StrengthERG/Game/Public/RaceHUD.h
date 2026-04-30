@@ -3,8 +3,14 @@
 /**
  * RaceHUD.h
  *
- * Race HUD — layout built entirely in C++ so no manual UMG positioning is needed.
- * The WBP_RaceHUD asset just needs URaceHUD set as its parent class.
+ * Binds to named TextBlock widgets already placed in WBP_RaceHUD.
+ * The Blueprint designer owns layout/positioning - C++ drives data only.
+ * Widget names must match the variable names below exactly (BindWidget).
+ *
+ * Required widgets in WBP_RaceHUD:
+ *   TitleText, CyclingText, RowingText, StrengthText, WinnerText
+ * Optional (add to Blueprint for countdown display):
+ *   CountdownText
  */
 
 #include "CoreMinimal.h"
@@ -13,9 +19,6 @@
 #include "RaceHUD.generated.h"
 
 class UTextBlock;
-class UBorder;
-class UCanvasPanel;
-class UVerticalBox;
 
 UCLASS(Blueprintable, BlueprintType)
 class STRENGTHERG_API URaceHUD : public UUserWidget
@@ -29,33 +32,39 @@ public:
     UFUNCTION(BlueprintCallable, Category = "RaceHUD")
     void ShowWinner(EDeviceChannel WinnerChannel);
 
-    /** Show per-device readiness before the race starts. */
     UFUNCTION(BlueprintCallable, Category = "RaceHUD")
     void ShowWaiting(bool bCyclingReady, bool bRowingReady, bool bStrengthReady);
 
-    /** Display an integer countdown value (3, 2, 1, 0 = GO). */
     UFUNCTION(BlueprintCallable, Category = "RaceHUD")
     void ShowCountdown(int32 Value);
 
-    /** Hide countdown/waiting overlays - race is live. */
     UFUNCTION(BlueprintCallable, Category = "RaceHUD")
     void ShowRaceLive();
 
 protected:
     virtual void NativeConstruct() override;
 
-private:
-    // Built at construct time
+    // -- Bound to named widgets in WBP_RaceHUD ----------------------------
+
+    UPROPERTY(meta = (BindWidget))
     TObjectPtr<UTextBlock> TitleText;
+
+    UPROPERTY(meta = (BindWidget))
     TObjectPtr<UTextBlock> CyclingText;
+
+    UPROPERTY(meta = (BindWidget))
     TObjectPtr<UTextBlock> RowingText;
+
+    UPROPERTY(meta = (BindWidget))
     TObjectPtr<UTextBlock> StrengthText;
+
+    UPROPERTY(meta = (BindWidget))
     TObjectPtr<UTextBlock> WinnerText;
+
+    UPROPERTY(meta = (BindWidgetOptional))
     TObjectPtr<UTextBlock> CountdownText;
 
-    void BuildLayout();
-    UTextBlock* MakeText(UCanvasPanel* Canvas, FVector2D Position, FVector2D Alignment,
-                         const FString& DefaultStr, int32 FontSize, bool bBold = false);
+private:
     void UpdateLaneText(UTextBlock* Target, const FString& Label, bool bConnected,
                         float NormalisedSpeed, const FString& Detail);
 };

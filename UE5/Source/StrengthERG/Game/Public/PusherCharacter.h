@@ -1,3 +1,5 @@
+#pragma once
+
 /**
  * PusherCharacter.h
  *

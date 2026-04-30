@@ -2,11 +2,24 @@
 
 #include "Camera/CameraComponent.h"
 #include "RaceLaneActor.h"
+#include "Kismet/GameplayStatics.h"
+#include "GameFramework/PlayerController.h"
 
 ARaceCameraActor::ARaceCameraActor()
 {
     PrimaryActorTick.bCanEverTick = true;
     GetCameraComponent()->FieldOfView = 70.f;
+}
+
+void ARaceCameraActor::BeginPlay()
+{
+    Super::BeginPlay();
+
+    // Automatically make this the view for Player 0 — no Blueprint wiring needed.
+    if (APlayerController* PC = UGameplayStatics::GetPlayerController(this, 0))
+    {
+        PC->SetViewTargetWithBlend(this, 0.5f);
+    }
 }
 
 void ARaceCameraActor::Tick(float DeltaSeconds)

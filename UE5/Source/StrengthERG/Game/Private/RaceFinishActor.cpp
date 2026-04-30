@@ -24,6 +24,7 @@ ARaceFinishActor::ARaceFinishActor()
     Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
     Mesh->SetupAttachment(FinishBox);
     Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+    Mesh->SetRelativeRotation(FRotator(0.f, 90.f, 0.f)); // align banner across Y (perpendicular to +X travel)
 
     FinishMaterial = nullptr;
 }

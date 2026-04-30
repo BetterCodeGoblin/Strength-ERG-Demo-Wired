@@ -1,9 +1,10 @@
 #pragma once
+#pragma once
 /**
  * RaceHUD.h
  *
- * Small race HUD for the three-lane capture-the-flag prototype.
- * Shows connection/movement values and winner text without requiring a UMG pass yet.
+ * Race HUD — layout built entirely in C++ so no manual UMG positioning is needed.
+ * The WBP_RaceHUD asset just needs URaceHUD set as its parent class.
  */
 
 #include "CoreMinimal.h"
@@ -12,8 +13,9 @@
 #include "RaceHUD.generated.h"
 
 class UTextBlock;
-class UWidget;
 class UBorder;
+class UCanvasPanel;
+class UVerticalBox;
 
 UCLASS(Blueprintable, BlueprintType)
 class STRENGTHERG_API URaceHUD : public UUserWidget
@@ -21,28 +23,6 @@ class STRENGTHERG_API URaceHUD : public UUserWidget
     GENERATED_BODY()
 
 public:
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UWidget> RootPanel;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> TitleText;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> CyclingText;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> RowingText;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> StrengthText;
-
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UTextBlock> WinnerText;
-
-    /** Semi-transparent backing panel behind the three lane lines. */
-    UPROPERTY(meta = (BindWidgetOptional))
-    TObjectPtr<UBorder> LanePanel;
-
     UFUNCTION(BlueprintCallable, Category = "RaceHUD")
     void SetLaneStatus(EDeviceChannel Channel, bool bConnected, float NormalisedSpeed, const FString& Detail);
 
@@ -53,5 +33,16 @@ protected:
     virtual void NativeConstruct() override;
 
 private:
-    void UpdateLaneText(UTextBlock* Target, const FString& Label, bool bConnected, float NormalisedSpeed, const FString& Detail);
+    // Built at construct time
+    TObjectPtr<UTextBlock> TitleText;
+    TObjectPtr<UTextBlock> CyclingText;
+    TObjectPtr<UTextBlock> RowingText;
+    TObjectPtr<UTextBlock> StrengthText;
+    TObjectPtr<UTextBlock> WinnerText;
+
+    void BuildLayout();
+    UTextBlock* MakeText(UCanvasPanel* Canvas, FVector2D Position, FVector2D Alignment,
+                         const FString& DefaultStr, int32 FontSize, bool bBold = false);
+    void UpdateLaneText(UTextBlock* Target, const FString& Label, bool bConnected,
+                        float NormalisedSpeed, const FString& Detail);
 };

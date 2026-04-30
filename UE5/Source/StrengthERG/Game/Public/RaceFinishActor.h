@@ -20,6 +20,8 @@
 
 class UBoxComponent;
 class UBillboardComponent;
+class UStaticMeshComponent;
+class UMaterialInterface;
 
 UCLASS(Blueprintable, meta = (DisplayName = "Race Finish Actor"))
 class STRENGTHERG_API ARaceFinishActor : public AActor
@@ -35,6 +37,14 @@ public:
     /** Optional visual indicator (visible in editor only). */
     UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Race|Finish")
     UBillboardComponent* Billboard;
+
+    /** Optional visible mesh for the finish line (e.g. a banner or gate). */
+    UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Race|Finish")
+    UStaticMeshComponent* Mesh;
+
+    /** Material applied to the finish line mesh. Swap in the Details panel. */
+    UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Race|Finish")
+    UMaterialInterface* FinishMaterial;
 
     // ?? AActor interface ??????????????????????????????????????????????????
 

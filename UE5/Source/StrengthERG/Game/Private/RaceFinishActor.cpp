@@ -5,6 +5,8 @@
 #include "RaceGameMode.h"
 #include "Components/BoxComponent.h"
 #include "Components/BillboardComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Materials/MaterialInterface.h"
 #include "Kismet/GameplayStatics.h"
 
 ARaceFinishActor::ARaceFinishActor()
@@ -18,11 +20,21 @@ ARaceFinishActor::ARaceFinishActor()
 
     Billboard = CreateDefaultSubobject<UBillboardComponent>(TEXT("Billboard"));
     Billboard->SetupAttachment(FinishBox);
+
+    Mesh = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Mesh"));
+    Mesh->SetupAttachment(FinishBox);
+    Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+
+    FinishMaterial = nullptr;
 }
 
 void ARaceFinishActor::BeginPlay()
 {
     Super::BeginPlay();
+
+    if (FinishMaterial && Mesh)
+        Mesh->SetMaterial(0, FinishMaterial);
+
     FinishBox->OnComponentBeginOverlap.AddDynamic(this, &ARaceFinishActor::OnFinishOverlap);
 }
 

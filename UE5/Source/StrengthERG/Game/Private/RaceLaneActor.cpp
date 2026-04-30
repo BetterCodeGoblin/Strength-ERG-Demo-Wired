@@ -34,8 +34,8 @@ void ARaceLaneActor::Tick(float DeltaSeconds)
     const float SpeedCmS = FMath::Clamp(EffectiveSpeed, 0.f, 1.f) * MaxSpeedCmS;
     if (SpeedCmS <= 0.f) return;
 
-    // Move along local +X (forward for standard actor orientation)
-    const FVector Delta = GetActorForwardVector() * SpeedCmS * DeltaSeconds;
+    // Move along world +X so mesh rotation doesn't affect travel direction
+    const FVector Delta = FVector::ForwardVector * SpeedCmS * DeltaSeconds;
     SetActorLocation(GetActorLocation() + Delta);
 }
 

@@ -51,6 +51,7 @@ void ARaceDeviceLabActor::OnRaceDeviceUpdated(EDeviceChannel Channel, FErgData D
 
     if (RaceGameMode)
     {
-        RaceGameMode->UpdateLaneHud(Channel, true, NormalisedSpeed, Detail);
+        RaceGameMode->NotifyDeviceConnected(Channel, Data.bIsConnected);
+        RaceGameMode->UpdateLaneHud(Channel, Data.bIsConnected, NormalisedSpeed, Detail);
     }
 }

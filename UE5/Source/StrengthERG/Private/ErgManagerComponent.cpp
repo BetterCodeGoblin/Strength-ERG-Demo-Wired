@@ -556,38 +556,10 @@ void UErgManagerComponent::LaunchBridgeProcess()
         FPaths::NormalizeFilename(FullPath);
     }
 
-    UE_LOG(LogTemp, Log, TEXT("[ErgManager] Trying bridge path: %s"), *FullPath);
-
     if (!FPaths::FileExists(FullPath))
     {
-        UE_LOG(LogTemp, Warning, TEXT("[ErgManager] Bridge not found at configured path: %s — probing fallbacks..."), *FullPath);
-
-        // Probe common PM5BleBridge output locations relative to the project dir.
-        // The .NET Windows TFM suffix varies by SDK; try the most common variants.
-        FString ProjectDir = FPaths::ConvertRelativePathToFull(FPaths::ProjectDir());
-        TArray<FString> Candidates = {
-            ProjectDir + TEXT("../PM5BleBridge/bin/Release/net8.0-windows10.0.19041.0/PM5BleBridge.exe"),
-            ProjectDir + TEXT("../PM5BleBridge/bin/Release/net8.0-windows/PM5BleBridge.exe"),
-            ProjectDir + TEXT("../PM5BleBridge/publish/PM5BleBridge.exe"),
-        };
-        for (FString& Candidate : Candidates)
-        {
-            FPaths::NormalizeFilename(Candidate);
-            FPaths::CollapseRelativeDirectories(Candidate);
-            UE_LOG(LogTemp, Log, TEXT("[ErgManager]   Probing: %s"), *Candidate);
-            if (FPaths::FileExists(Candidate))
-            {
-                UE_LOG(LogTemp, Log, TEXT("[ErgManager] Found bridge at fallback path: %s"), *Candidate);
-                FullPath = Candidate;
-                break;
-            }
-        }
-
-        if (!FPaths::FileExists(FullPath))
-        {
-            UE_LOG(LogTemp, Error, TEXT("[ErgManager] ErgBridge not found at any known path. Last tried: %s"), *FullPath);
-            return;
-        }
+        UE_LOG(LogTemp, Error, TEXT("[ErgManager] ErgBridge not found at: %s"), *FullPath);
+        return;
     }
 
     BridgeProcessHandle = FPlatformProcess::CreateProc(

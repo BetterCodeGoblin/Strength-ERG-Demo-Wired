@@ -21,7 +21,7 @@ ADeviceLabActor::ADeviceLabActor()
     // PM5BleBridge.exe manages all three BLE connections and all three ports.
     // We launch it once from the Strength slot; Rowing and Cycling slots connect
     // to their ports without launching a separate process.
-    StrengthDevice->BridgeExePath  = TEXT("../PM5BleBridge/bin/Release/net8.0-windows10.0.19041.0/PM5BleBridge.exe");
+    StrengthDevice->BridgeExePath  = TEXT("../PM5BleBridge/bin/Release/net8.0-windows/PM5BleBridge.exe");
 
     // ?? Rowing — PM5BleBridge serves port 6791, no separate launch ??????????
     RowingDevice = CreateDefaultSubobject<UErgManagerComponent>(TEXT("RowingDevice"));

@@ -77,19 +77,4 @@ void ARaceCameraActor::GatherTargetPositions(TArray<FVector>& OutPositions) cons
         if (Target)
             OutPositions.Add(Target->GetActorLocation());
     }
-
-    // Fallback: if no manual targets were assigned in the editor, auto-discover
-    // any RaceLaneActors placed in the world. This keeps the camera functional
-    // even when the editor UPROPERTY refs are null (e.g. after map reload).
-    if (OutPositions.IsEmpty() && GetWorld())
-    {
-        TArray<AActor*> Found;
-        UGameplayStatics::GetAllActorsOfClass(GetWorld(), ARaceLaneActor::StaticClass(), Found);
-        if (!Found.IsEmpty())
-        {
-            UE_LOG(LogTemp, Warning, TEXT("[RaceCamera] Manual targets not set -- auto-discovered %d lane actor(s)."), Found.Num());
-            for (AActor* A : Found)
-                OutPositions.Add(A->GetActorLocation());
-        }
-    }
 }

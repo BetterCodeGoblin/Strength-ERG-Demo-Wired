@@ -82,10 +82,6 @@ public:
     UPROPERTY(BlueprintReadWrite, Category = "Race")
     bool bRaceStopped = false;
 
-    /** Set to true by the game mode once the countdown completes. Allows movement. */
-    UPROPERTY(BlueprintReadWrite, Category = "Race")
-    bool bRaceStarted = false;
-
     // ?? API for Slice 3 telemetry hookup ??????????????????????????????????
 
     /**

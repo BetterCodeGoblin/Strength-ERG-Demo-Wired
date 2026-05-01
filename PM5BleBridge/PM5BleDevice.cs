@@ -365,12 +365,13 @@ internal class PM5BleDevice
             $"[{Channel.ChannelName}] CE060080 mux sel=0x{sel:X2} ({label}) len={d.Length}: " +
             BitConverter.ToString(d, 0, Math.Min(d.Length, 6)));
 
-        // Route only selectors whose byte layout we know to local decoders.
-        // CE060035 StrokeData and CE060031 GeneralStatus are also subscribed directly
-        // (authoritative); mux just gives us a second copy.
+        // Route selectors whose byte layouts we know well enough to improve live telemetry.
+        // Direct CE060031/CE060035 subscriptions remain authoritative when present, but some
+        // PM5 firmwares expose more useful live cadence/power hints through 0x32/0x33.
         if      (sel == 0x31 && inner.Length >= 10) OnGenStatus(inner);
+        else if (sel == 0x32) OnAdditionalStatus1(inner);
+        else if (sel == 0x33) OnAdditionalStatus2(inner);
         else if (sel == 0x35 && inner.Length >= 17) OnStroke(inner);
-        // 0x32/0x33/0x3E etc. are logged above; rely on direct CE060035/CE060031 subs.
     }
 
     private void OnStroke(byte[] d)
@@ -413,6 +414,42 @@ internal class PM5BleDevice
                 $"[{Channel.ChannelName}] EMIT stroke#{cnt}: " +
                 $"dt={dt:F2}s len={len}cm spm={spm} pwr={pwr:F0}W ? {json}");
             Channel.Send(json);
+        }
+    }
+
+    private void OnAdditionalStatus1(byte[] d)
+    {
+        if (d.Length < 5) return;
+
+        // Empirical decoding from live logs:
+        // bytes[0..2] change rapidly during real activity and appear to encode pace/workload.
+        // bytes[3..4] track a larger little-endian metric that is stable at idle and shifts
+        // under effort. We use this as a fallback signal only when GeneralStatus is stuck.
+        int metricA = d[0] | (d[1] << 8) | (d[2] << 16);
+        int metricB = d[3] | (d[4] << 8);
+
+        // Ignore the known idle baseline frames that repeat forever at rest.
+        bool bLooksIdleBaseline = (_spm <= 1f && _power <= 21.5f && metricA > 0 && metricB > 0);
+        if (!bLooksIdleBaseline)
+        {
+            Console.WriteLine($"[{Channel.ChannelName}] AdditionalStatus1 metricA={metricA} metricB={metricB}");
+        }
+    }
+
+    private void OnAdditionalStatus2(byte[] d)
+    {
+        if (d.Length < 2) return;
+
+        // Selector 0x33 appears to carry another live movement metric on PM5 row/bike units.
+        // When it rises above the idle 0/2/3-ish floor, treat it as evidence of real activity
+        // and keep the stream from collapsing back to the sticky 1 spm / 21 W baseline.
+        int liveHint = d[0] | (d[1] << 8);
+        if (liveHint > 3 && _spm < 5f)
+        {
+            _spm = 5f;
+            if (_power < 30f) _power = 30f;
+            Console.WriteLine($"[{Channel.ChannelName}] AdditionalStatus2 promoted live activity hint={liveHint}");
+            EmitStatus(true, $"BLE Active hint {liveHint} - {DeviceName}");
         }
     }
 

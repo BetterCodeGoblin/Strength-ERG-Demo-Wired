@@ -118,7 +118,7 @@ uint32 FErgReaderThread::Run()
 
         {
             FErgData D;
-            D.bIsConnected = false;
+            D.bIsConnected = true;
             D.StatusText   = TEXT("Bridge connected");
             OwnerComp->ThreadSafe_UpdateData(D);
         }
@@ -151,10 +151,13 @@ uint32 FErgReaderThread::Run()
             if (!Sock->Recv(Buffer.GetData(), Buffer.Num(), BytesRead) || BytesRead == 0)
                 break;  // genuine disconnect
 
-            // Append received bytes to line buffer, split on newline
+            // Append received bytes to line buffer, accept either LF or CRLF framing.
+            // Some bridge builds emit '\r' without a clean '\n'-terminated line every frame.
             FString Chunk = FString(BytesRead, UTF8_TO_TCHAR(
                 reinterpret_cast<const char*>(Buffer.GetData())));
             LineBuffer += Chunk;
+            LineBuffer.ReplaceInline(TEXT("\r\n"), TEXT("\n"));
+            LineBuffer.ReplaceInline(TEXT("\r"), TEXT("\n"));
 
             int32 NewlineIdx;
             while (LineBuffer.FindChar(TEXT('\n'), NewlineIdx))

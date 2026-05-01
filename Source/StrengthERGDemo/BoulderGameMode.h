@@ -162,6 +162,7 @@ private:
     float TimeSinceLastRep  = 0.f;
     float TotalPowerSum     = 0.f;
     int32 SimRepCounter     = 0;
+    bool  bErgDeviceReady   = false;
 
     // Input binding (keyboard sim)
     void SetupInputBindings();
@@ -169,6 +170,10 @@ private:
     // ERG event handler
     UFUNCTION()
     void HandleNewRep(const FRepData& Rep);
+
+    // ERG connection event handler
+    UFUNCTION()
+    void OnErgConnectionChanged(bool bConnected);
 
     void ChangeState(EBoulderGameState NewState);
     void EndGame(bool bWon);

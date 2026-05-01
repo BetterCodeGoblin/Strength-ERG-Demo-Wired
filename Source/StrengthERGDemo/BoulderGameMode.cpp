@@ -29,6 +29,7 @@ void ABoulderGameMode::BeginPlay()
     {
         ErgManager->bSimulateInput = bSimulateInput;
         ErgManager->OnNewRep.AddDynamic(this, &ABoulderGameMode::HandleNewRep);
+        ErgManager->OnErgConnectionChanged.AddDynamic(this, &ABoulderGameMode::OnErgConnectionChanged);
     }
 
     // Spawn player character if not already in world
@@ -127,6 +128,22 @@ void ABoulderGameMode::FireSimulatedRep()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+//  ERG Connection Handler
+// ─────────────────────────────────────────────────────────────────────────────
+
+void ABoulderGameMode::OnErgConnectionChanged(bool bConnected)
+{
+    // Use LiveFrame.bConnected as the authoritative PM5 device signal.
+    // The TCP socket connecting to the bridge does NOT mean the PM5 is ready.
+    const bool bPM5Ready = ErgManager ? ErgManager->LiveFrame.bConnected : false;
+    bErgDeviceReady = bPM5Ready;
+
+    UE_LOG(LogTemp, Log, TEXT("[BoulderGame] ERG connection changed: bridge=%s, PM5=%s"),
+        bConnected ? TEXT("connected") : TEXT("disconnected"),
+        bPM5Ready  ? TEXT("ready")     : TEXT("not ready"));
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 //  Rep Handler
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -135,10 +152,18 @@ void ABoulderGameMode::HandleNewRep(const FRepData& Rep)
     UE_LOG(LogTemp, Log, TEXT("[BoulderGame] Rep #%d received — state=%d, pull=%d, power=%.1f"),
         Rep.RepNumber, (int32)CurrentBoulderGameState, Rep.PullDistance, Rep.RepPower);
 
-    // Auto-start: first row on Idle screen kicks off the countdown
+    // Auto-start: first row on Idle screen kicks off the countdown,
+    // but only when the PM5 device is confirmed connected.
     if (CurrentBoulderGameState == EBoulderGameState::Idle)
     {
-        StartGame();
+        if (bErgDeviceReady)
+        {
+            StartGame();
+        }
+        else
+        {
+            UE_LOG(LogTemp, Warning, TEXT("[BoulderGame] Rep received but ERG device not ready yet — ignoring"));
+        }
         return;
     }
 

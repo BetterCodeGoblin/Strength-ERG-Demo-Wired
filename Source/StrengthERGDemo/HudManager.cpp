@@ -130,7 +130,7 @@ void AHudManager::OnRepProcessed(const FRepData& Rep)
     Feedback.Text = Text;
     Feedback.Color = Color;
     Feedback.Timer = 0.f;
-    Feedback.StartPos = FVector2D(Canvas->ClipX * 0.5f, Canvas->ClipY * 0.7f);
+    Feedback.StartPos = FVector2D::ZeroVector; // resolved in DrawPushFeedback where Canvas is valid
 
     PushFeedback = Feedback;
 }
@@ -178,10 +178,17 @@ void AHudManager::DrawStartScreen()
     // Title
     DrawCenteredText(TEXT("PUSH THE BOULDER"), Canvas->ClipY * 0.3f, 3.0f, FLinearColor::White);
 
-    // Instructions
-    DrawCenteredText(TEXT("Row to Start"), Canvas->ClipY * 0.5f, 1.5f, FLinearColor::Yellow);
+    // Device / ready status
+    if (GameMode && GameMode->ErgManager && GameMode->ErgManager->LiveFrame.bConnected)
+    {
+        DrawCenteredText(TEXT("ERG Connected — Row to Start"), Canvas->ClipY * 0.5f, 1.5f, FLinearColor::Yellow);
+    }
+    else
+    {
+        DrawCenteredText(TEXT("Waiting for ERG device..."), Canvas->ClipY * 0.5f, 1.5f, FLinearColor(1.f, 0.4f, 0.1f, 1.f));
+    }
 
-    // Or show button hint
+    // Button hint
     DrawCenteredText(TEXT("Press SPACE to simulate push (test mode)"), Canvas->ClipY * 0.85f, 1.0f, FLinearColor::Gray);
 }
 
@@ -353,6 +360,13 @@ void AHudManager::DrawPushFeedback(float DeltaTime)
     if (!Canvas || !PushFeedback.IsSet()) return;
 
     FPushFeedback& Feedback = PushFeedback.GetValue();
+
+    // Resolve position on the first draw tick when Canvas dimensions are known
+    if (Feedback.StartPos == FVector2D::ZeroVector)
+    {
+        Feedback.StartPos = FVector2D(Canvas->ClipX * 0.5f, Canvas->ClipY * 0.7f);
+    }
+
     Feedback.Timer += DeltaTime;
 
     if (Feedback.Timer >= Feedback.Duration)

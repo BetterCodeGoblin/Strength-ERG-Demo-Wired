@@ -102,16 +102,58 @@ watcher.Received += (_, args) =>
         if (!isC2Device) return;          // not a Concept2 device — ignore silently
         if (assigned.ContainsKey(addr)) return;  // already assigned
 
-        // Find an unoccupied slot that accepts this device.
+        // Prefer deterministic type-based slot matching when slots are not pinned.
+        // This prevents two generic "PM5 " devices from randomly swapping Rowing/Cycling
+        // by BLE discovery order across sessions.
+        static bool IsStrengthName(string n) => n.StartsWith("STR ", StringComparison.OrdinalIgnoreCase);
+        static bool IsGenericPm5Name(string n) => n.StartsWith("PM5 ", StringComparison.OrdinalIgnoreCase);
+
         ChannelServer? slot = null;
+
+        // 1) Explicit pm5Name pinning wins.
         foreach (var srv in servers)
         {
             bool slotFree = !assigned.Values.Contains(srv.ChannelName,
                 StringComparer.OrdinalIgnoreCase);
-            if (slotFree && srv.AcceptsDevice(name))
+            if (slotFree && srv.IsPinned && srv.AcceptsDevice(name))
             {
                 slot = srv;
                 break;
+            }
+        }
+
+        // 2) If not pinned, map Strength prefix to Strength slot.
+        if (slot == null && IsStrengthName(name))
+        {
+            slot = servers.FirstOrDefault(srv =>
+                srv.ChannelName.Equals("Strength", StringComparison.OrdinalIgnoreCase) &&
+                !assigned.Values.Contains(srv.ChannelName, StringComparer.OrdinalIgnoreCase));
+        }
+
+        // 3) Remaining generic PM5 devices: prefer Rowing first, then Cycling.
+        if (slot == null && IsGenericPm5Name(name))
+        {
+            slot = servers.FirstOrDefault(srv =>
+                srv.ChannelName.Equals("Rowing", StringComparison.OrdinalIgnoreCase) &&
+                !assigned.Values.Contains(srv.ChannelName, StringComparer.OrdinalIgnoreCase));
+
+            slot ??= servers.FirstOrDefault(srv =>
+                srv.ChannelName.Equals("Cycling", StringComparison.OrdinalIgnoreCase) &&
+                !assigned.Values.Contains(srv.ChannelName, StringComparer.OrdinalIgnoreCase));
+        }
+
+        // 4) Final fallback: first free accepting slot.
+        if (slot == null)
+        {
+            foreach (var srv in servers)
+            {
+                bool slotFree = !assigned.Values.Contains(srv.ChannelName,
+                    StringComparer.OrdinalIgnoreCase);
+                if (slotFree && srv.AcceptsDevice(name))
+                {
+                    slot = srv;
+                    break;
+                }
             }
         }
 

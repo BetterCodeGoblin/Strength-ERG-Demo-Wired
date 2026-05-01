@@ -558,8 +558,30 @@ void UErgManagerComponent::LaunchBridgeProcess()
 
     if (!FPaths::FileExists(FullPath))
     {
-        UE_LOG(LogTemp, Error, TEXT("[ErgManager] ErgBridge not found at: %s"), *FullPath);
-        return;
+        // The configured path may use the bare TFM (e.g. net8.0-windows) while MSBuild
+        // emits an OS-versioned suffix (e.g. net8.0-windows10.0.19041.0).  Walk sibling
+        // directories under the same bin/Release folder and find the first matching exe.
+        FString ExeName    = FPaths::GetCleanFilename(FullPath);
+        FString SearchRoot = FPaths::GetPath(FPaths::GetPath(FullPath)); // bin/Release
+        TArray<FString> Siblings;
+        IFileManager::Get().FindFiles(Siblings, *(SearchRoot / TEXT("*")), false, true);
+        bool bFound = false;
+        for (const FString& Dir : Siblings)
+        {
+            FString Candidate = SearchRoot / Dir / ExeName;
+            if (FPaths::FileExists(Candidate))
+            {
+                UE_LOG(LogTemp, Warning, TEXT("[ErgManager] Path '%s' not found; using sibling '%s'"), *FullPath, *Candidate);
+                FullPath = Candidate;
+                bFound   = true;
+                break;
+            }
+        }
+        if (!bFound)
+        {
+            UE_LOG(LogTemp, Error, TEXT("[ErgManager] ErgBridge not found at: %s"), *FullPath);
+            return;
+        }
     }
 
     BridgeProcessHandle = FPlatformProcess::CreateProc(

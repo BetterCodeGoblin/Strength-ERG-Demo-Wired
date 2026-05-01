@@ -391,7 +391,11 @@ internal class PM5BleDevice
             pwr = w * 0.001f / dt;
         }
 
-        if (cnt <= 0 || dt <= 0f) return;
+        if (cnt <= 0 || dt <= 0f)
+        {
+            Console.WriteLine($"[{Channel.ChannelName}] OnStroke ignored invalid cnt={cnt} dt={dt:F3}");
+            return;
+        }
 
         _elapsed = elapsed;
         if (spm > 0) _spm = spm;
@@ -414,7 +418,11 @@ internal class PM5BleDevice
 
     private void OnGenStatus(byte[] d)
     {
-        if (d.Length < 10) return;
+        if (d.Length < 10)
+        {
+            Console.WriteLine($"[{Channel.ChannelName}] OnGenStatus ignored short payload len={d.Length}");
+            return;
+        }
         float elapsed = (d[0] | (d[1] << 8) | (d[2] << 16)) * 0.01f;
         int   paceSec = d[6] | (d[7] << 8);
         int   spm     = d[8];

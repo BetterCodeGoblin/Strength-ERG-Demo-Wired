@@ -106,7 +106,7 @@ internal class PM5BleDevice
                        : "RowErg/BikeErg/SkiErg => CE060030 notifications"));
 
             if (isStr) await RunStrengthAsync(dev, ct);
-            else       await RunRowingAsync(dev, ct);
+            else       await RunEnduranceAsync(dev, ct);
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) when (!_stop)
@@ -250,9 +250,107 @@ internal class PM5BleDevice
         }
     }
 
-    // ?? RowErg / BikeErg / SkiErg: CE060030 notification path ???????????????
-    private async Task RunRowingAsync(BluetoothLEDevice dev, CancellationToken ct)
+    private async Task RunEnduranceCsafeAsync(BluetoothLEDevice dev, CancellationToken ct)
     {
+        var ctrl = await SvcAsync(dev, UUID_CtrlSvc, "CE060020");
+        using (ctrl)
+        {
+            var tx = await CharAsync(ctrl, UUID_CtrlTx, "CE060021 TX");
+            var rx = await CharAsync(ctrl, UUID_CtrlRx, "CE060022 RX");
+
+            rx.ValueChanged += (_, a) =>
+            {
+                CryptographicBuffer.CopyToByteArray(a.CharacteristicValue, out byte[] raw);
+                if (raw?.Length > 0)
+                {
+                    Console.WriteLine($"[{Channel.ChannelName}] CSAFE RX [{raw.Length}]: " + BitConverter.ToString(raw));
+                    _csafeRx.Enqueue(raw);
+                }
+            };
+
+            await NotifyAsync(rx, "CE060022");
+            Console.WriteLine($"[{Channel.ChannelName}] CE060022 subscribed. Polling endurance metrics...");
+            EmitStatus(true, $"CSAFE connected - {DeviceName}");
+            await EndurancePollLoop(dev, tx, ct);
+        }
+    }
+
+    private async Task EndurancePollLoop(BluetoothLEDevice dev, GattCharacteristic tx, CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested && !_stop
+               && dev.ConnectionStatus == BluetoothConnectionStatus.Connected)
+        {
+            try
+            {
+                await WriteCsafe(tx, CsafeHelper.BuildFrame(CsafeHelper.CMD_CADENCE, CsafeHelper.CMD_POWER, CsafeHelper.CMD_HR, CsafeHelper.CMD_WORK));
+                await Task.Delay(250, ct);
+                DrainEnduranceCsafe();
+                EmitStatus(true, $"CSAFE Active - {DeviceName}");
+                await Task.Delay(250, ct);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{Channel.ChannelName}] Endurance CSAFE poll error: {ex.Message}");
+                await Task.Delay(500, ct);
+            }
+        }
+    }
+
+    private void DrainEnduranceCsafe()
+    {
+        while (_csafeRx.TryDequeue(out byte[]? r))
+        {
+            var cad = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_CADENCE);
+            if (cad?.Length >= 1)
+            {
+                _spm = cad[0];
+                Console.WriteLine($"[{Channel.ChannelName}] CSAFE GETCADENCE -> {_spm:F0}");
+            }
+
+            var pwr = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_POWER);
+            if (pwr?.Length >= 2)
+            {
+                _power = pwr[0] | (pwr[1] << 8);
+                Console.WriteLine($"[{Channel.ChannelName}] CSAFE GETPOWER -> {_power:F0}W");
+                if (_power > 1f)
+                    _pace = CsafeHelper.ComputeRowingPace(_power);
+                else if (_spm == 0f)
+                    _pace = 0f;
+            }
+
+            var hr = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_HR);
+            if (hr?.Length >= 1)
+            {
+                _hr = hr[0];
+                Console.WriteLine($"[{Channel.ChannelName}] CSAFE GETHRCUR -> {_hr} BPM");
+            }
+
+            var wt = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_WORK);
+            if (wt?.Length >= 3)
+            {
+                _elapsed = wt[0] * 3600f + wt[1] * 60f + wt[2];
+                Console.WriteLine($"[{Channel.ChannelName}] CSAFE GETTWORK -> {_elapsed:F0}s");
+            }
+        }
+    }
+
+    // RowErg / BikeErg: prefer CSAFE control polling, fall back to CE060030 notifications.
+    private async Task RunEnduranceAsync(BluetoothLEDevice dev, CancellationToken ct)
+    {
+        Console.WriteLine($"[{Channel.ChannelName}] Trying CE060020 CSAFE control path first...");
+
+        try
+        {
+            await RunEnduranceCsafeAsync(dev, ct);
+            return;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[{Channel.ChannelName}] CSAFE endurance path unavailable: {ex.Message}");
+        }
+
+        Console.WriteLine($"[{Channel.ChannelName}] Falling back to CE060030 notification path...");
         Console.WriteLine($"[{Channel.ChannelName}] Looking up CE060030...");
         GattDeviceService? svc = null;
         try { svc = await SvcAsync(dev, UUID_RowingSvc, "CE060030"); }

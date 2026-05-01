@@ -1,9 +1,5 @@
 #include "RaceHUD.h"
-#include "RaceHUD.h"
 #include "Components/TextBlock.h"
-#include "Components/CanvasPanel.h"
-#include "Components/CanvasPanelSlot.h"
-#include "Blueprint/WidgetTree.h"
 
 // -- Colour palette --------------------------------------------------------
 static const FLinearColor ColConnected    = FLinearColor(0.2f,  1.0f,  0.4f,  1.f);
@@ -15,81 +11,10 @@ static const FLinearColor ColCountdown    = FLinearColor(1.0f,  0.95f, 0.95f, 1.
 
 void URaceHUD::NativeConstruct()
 {
-    // Guard: IsTemplate() is true for CDOs and archetype objects.
-    // During Hot Reload the engine re-creates CDOs while iterating the UObject
-    // hash table; any further UObject creation here would crash (FindOrAdd
-    // during iteration). Real PIE instances have IsTemplate() == false.
-    if (IsTemplate()) return;
-
     Super::NativeConstruct();
-
-    // Build the widget tree if it hasn't been built yet.
-    // BuildLayout creates a root CanvasPanel and six TextBlock children with
-    // intentional centered screen positions. It replaces whatever the Blueprint
-    // designer placed in WBP_RaceHUD, so no editor widget-placement is needed.
-    if (!TitleText)
-        BuildLayout();
-
+    // Blueprint owns the widget hierarchy (WBP_RaceHUD).
+    // C++ only updates the bound BindWidgetOptional references from here on.
     ShowWaiting(false, false, false);
-}
-
-// -- Layout builder --------------------------------------------------------
-
-void URaceHUD::BuildLayout()
-{
-    if (!WidgetTree) return;
-
-    // Create a full-screen root canvas panel.
-    UCanvasPanel* Canvas = WidgetTree->ConstructWidget<UCanvasPanel>();
-    WidgetTree->RootWidget = Canvas;
-
-    // -- Title: top-center -------------------------------------------------
-    TitleText = MakeText(Canvas,
-        /*Offset=*/FVector2D(0.f, 36.f), /*Anchor=*/FVector2D(0.5f, 0.0f),
-        TEXT("First to the Flag"), 32, /*bBold=*/true);
-    TitleText->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-
-    // -- Lane status lines: centered, below title --------------------------
-    CyclingText  = MakeText(Canvas, FVector2D(0.f, 108.f), FVector2D(0.5f, 0.f), TEXT(""), 20);
-    RowingText   = MakeText(Canvas, FVector2D(0.f, 142.f), FVector2D(0.5f, 0.f), TEXT(""), 20);
-    StrengthText = MakeText(Canvas, FVector2D(0.f, 176.f), FVector2D(0.5f, 0.f), TEXT(""), 20);
-
-    // -- Winner: screen center, large gold, hidden until race ends ---------
-    WinnerText = MakeText(Canvas, FVector2D(0.f, -80.f), FVector2D(0.5f, 0.5f), TEXT(""), 56, true);
-    WinnerText->SetColorAndOpacity(FSlateColor(ColWinner));
-    WinnerText->SetVisibility(ESlateVisibility::Collapsed);
-
-    // -- Countdown: screen center, very large, hidden until countdown ------
-    CountdownText = MakeText(Canvas, FVector2D(0.f, 0.f), FVector2D(0.5f, 0.5f), TEXT(""), 96, true);
-    CountdownText->SetColorAndOpacity(FSlateColor(ColCountdown));
-    CountdownText->SetVisibility(ESlateVisibility::Collapsed);
-
-    UE_LOG(LogTemp, Log, TEXT("[RaceHUD] Widget tree built by C++ BuildLayout."));
-}
-
-UTextBlock* URaceHUD::MakeText(UCanvasPanel* Canvas, FVector2D Offset, FVector2D Anchor,
-                                const FString& Default, int32 Size, bool bBold)
-{
-    UTextBlock* TB = WidgetTree->ConstructWidget<UTextBlock>();
-
-    FSlateFontInfo Font = TB->GetFont();
-    Font.Size = Size;
-    if (bBold) Font.TypefaceFontName = FName("Bold");
-    TB->SetFont(Font);
-    TB->SetColorAndOpacity(FSlateColor(FLinearColor::White));
-    if (!Default.IsEmpty())
-        TB->SetText(FText::FromString(Default));
-
-    // Use PanelSlot to avoid shadowing the UWidget::Slot member.
-    UCanvasPanelSlot* PanelSlot = Canvas->AddChildToCanvas(TB);
-    // Point anchor (Min==Max). Offset = pixel offset from that anchor point.
-    // Alignment mirrors Anchor so the widget self-centres on the anchor.
-    PanelSlot->SetAnchors(FAnchors(Anchor.X, Anchor.Y));
-    PanelSlot->SetPosition(Offset);
-    PanelSlot->SetAlignment(Anchor);
-    PanelSlot->SetAutoSize(true);
-
-    return TB;
 }
 
 // -- Public API ------------------------------------------------------------

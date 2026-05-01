@@ -4,6 +4,24 @@
 #include "RaceLaneActor.h"
 #include "Kismet/GameplayStatics.h"
 
+// bIsConnected goes true the moment the bridge TCP socket connects, before any
+// live telemetry has arrived. Require at least one non-zero telemetry value so
+// we know the PM5 is actively streaming, not just socket-handshaked.
+static bool IsDeviceTrulyReady(EDeviceChannel Channel, const FErgData& Data)
+{
+    if (!Data.bIsConnected) return false;
+    switch (Channel)
+    {
+    case EDeviceChannel::Cycling:
+    case EDeviceChannel::Rowing:
+        return Data.PowerWatts > 0.f || Data.StrokeRate > 0.f;
+    case EDeviceChannel::Strength:
+        return Data.PullDistance > 0 || Data.RepCount > 0;
+    default:
+        return false;
+    }
+}
+
 void ARaceDeviceLabActor::BeginPlay()
 {
     Super::BeginPlay();
@@ -54,7 +72,10 @@ void ARaceDeviceLabActor::OnRaceDeviceUpdated(EDeviceChannel Channel, FErgData D
 
     if (RaceGameMode)
     {
-        RaceGameMode->NotifyDeviceConnected(Channel, Data.bIsConnected);
-        RaceGameMode->UpdateLaneHud(Channel, Data.bIsConnected, NormalisedSpeed, Detail);
+        const bool bTrulyReady = IsDeviceTrulyReady(Channel, Data);
+        UE_LOG(LogTemp, Log, TEXT("[RaceDevice] Channel=%d bIsConnected=%d bTrulyReady=%d"),
+            (int32)Channel, (int32)Data.bIsConnected, (int32)bTrulyReady);
+        RaceGameMode->NotifyDeviceConnected(Channel, bTrulyReady);
+        RaceGameMode->UpdateLaneHud(Channel, bTrulyReady, NormalisedSpeed, Detail);
     }
 }

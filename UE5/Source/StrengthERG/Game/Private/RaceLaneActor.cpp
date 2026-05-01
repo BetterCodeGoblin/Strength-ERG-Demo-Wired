@@ -20,7 +20,7 @@ void ARaceLaneActor::Tick(float DeltaSeconds)
 {
     Super::Tick(DeltaSeconds);
 
-    if (bRaceStopped) return;
+    if (bRaceStopped || !bRaceStarted) return;
 
     // Decay impulse timer
     float EffectiveSpeed = bUseDebugConstantSpeed ? DebugConstantSpeed : NormalisedSpeed;

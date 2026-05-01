@@ -22,6 +22,11 @@ void ARaceDeviceLabActor::OnRaceDeviceUpdated(EDeviceChannel Channel, FErgData D
     {
     case EDeviceChannel::Cycling:
         TargetLane = CyclingLane;
+        if (!Data.bIsConnected)
+        {
+            if (TargetLane) TargetLane->SetNormalisedSpeed(0.f);
+            break;
+        }
         NormalisedSpeed = FMath::Clamp(Data.PowerWatts / FMath::Max(1.f, CyclingReferencePower), 0.f, 1.f);
         Detail = FString::Printf(TEXT("%0.0fW %0.0frpm"), Data.PowerWatts, Data.StrokeRate);
         if (TargetLane) TargetLane->SetNormalisedSpeed(NormalisedSpeed);
@@ -29,6 +34,11 @@ void ARaceDeviceLabActor::OnRaceDeviceUpdated(EDeviceChannel Channel, FErgData D
 
     case EDeviceChannel::Rowing:
         TargetLane = RowingLane;
+        if (!Data.bIsConnected)
+        {
+            if (TargetLane) TargetLane->SetNormalisedSpeed(0.f);
+            break;
+        }
         NormalisedSpeed = FMath::Clamp(Data.PowerWatts / FMath::Max(1.f, RowingReferencePower), 0.f, 1.f);
         Detail = FString::Printf(TEXT("%0.0fW %0.0fspm"), Data.PowerWatts, Data.StrokeRate);
         if (TargetLane) TargetLane->SetNormalisedSpeed(NormalisedSpeed);
@@ -41,7 +51,7 @@ void ARaceDeviceLabActor::OnRaceDeviceUpdated(EDeviceChannel Channel, FErgData D
         if (TargetLane)
         {
             TargetLane->SetNormalisedSpeed(0.f);
-            if (Data.RepCount > 0 && Data.PullDistance > 0)
+            if (Data.bIsConnected && Data.RepCount > 0 && Data.PullDistance > 0)
             {
                 TargetLane->ApplySpeedImpulse(NormalisedSpeed, StrengthImpulseDuration);
             }

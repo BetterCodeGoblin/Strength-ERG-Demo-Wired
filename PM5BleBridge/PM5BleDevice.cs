@@ -422,10 +422,24 @@ internal class PM5BleDevice
 
         _elapsed = elapsed;
         _hr      = hr;
-        if (paceSec > 0) _pace = paceSec;
-        if (spm     > 0) _spm  = spm;
-        if (paceSec > 0 && _power <= 0f)
+
+        // Always assign spm so that a device returning to idle reports 0, not its last active rate.
+        _spm = spm;
+
+        if (paceSec > 0)
+        {
+            _pace  = paceSec;
+            // Derive power from pace whenever we have a valid pace reading.
             _power = (float)(2.8 * Math.Pow(500.0 / paceSec, 3.0));
+        }
+        else if (spm == 0)
+        {
+            // Truly idle (no pace, no stroke rate): clear streaming fields so stale
+            // values from a previous workout do not drive lane movement in Unreal.
+            _pace  = 0f;
+            _power = 0f;
+        }
+        // spm > 0 but paceSec == 0: mid-stroke burst with no split yet — keep last power.
 
         EmitStatus(true, $"BLE Active — {DeviceName}");
     }

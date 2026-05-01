@@ -12,7 +12,7 @@
 //
 //   MinActiveStrokeRate  – SPM (rowing) or RPM (cycling) below which the
 //                          device is considered idle regardless of power.
-//                          0.5 catches any real motion while ignoring noise.
+//                          5.0 filters lingering 1 rpm / 1 spm tail-noise after real effort.
 //
 //   MinActivePowerWatts  – fallback threshold for power-only frames (rare).
 //                          30 W is well above observed idle noise (~21 W)
@@ -20,7 +20,7 @@
 //
 // Both conditions are OR'd: either meaningful cadence OR meaningful power
 // must be present for the channel to count as active.
-static constexpr float MinActiveStrokeRate = 0.5f;   // spm / rpm
+static constexpr float MinActiveStrokeRate = 5.0f;   // spm / rpm
 static constexpr float MinActivePowerWatts = 30.f;   // watts
 
 // Returns true when telemetry represents real physical effort on a rowing

@@ -319,9 +319,9 @@ internal class PM5BleDevice
                 // Derive a coarse live-activity signal from power until we have the correct
                 // cadence command on the endurance control path. This keeps UE truthfully
                 // idle at tiny baseline watts but marks real effort as active.
-                if (_power >= 30f)
+                if (_power >= 5f)
                     _spm = 10f;
-                else if (_power <= 10f)
+                else if (_power <= 2f)
                     _spm = 0f;
 
                 if (_power > 1f)

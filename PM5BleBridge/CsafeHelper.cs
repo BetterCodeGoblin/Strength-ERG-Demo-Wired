@@ -84,21 +84,30 @@ internal static class CsafeHelper
         if (stop < 0) return null;
 
         int pos = start + 1;
-        // BLE CSAFE responses include a status byte after START (high bit set, e.g. 0x80/0x81).
-        // Skip it so we land on the first real command ID.
-        if (pos < stop && (buf[pos] & 0x80) != 0) pos++;
+
+        // BLE CSAFE responses often start with a status byte (0x01/0x81/etc.).
+        // Skip exactly one non-command header byte if present.
+        if (pos < stop && buf[pos] != cmd && buf[pos] != CMD_WRAPPER)
+            pos++;
+
         while (pos < stop - 1)
         {
-            if (pos >= buf.Length) break;
-            byte id  = buf[pos++];
+            byte id = buf[pos++];
             if (pos >= stop) break;
             byte len = buf[pos++];
-            if (id == cmd && len > 0 && pos + len <= stop)
+
+            // Defensive guard: if len would run past STOP, this is not a normal [id,len,data...] tuple.
+            // Abort so callers can fall back to raw logging instead of decoding garbage as cadence.
+            if (pos + len > stop)
+                return null;
+
+            if (id == cmd)
             {
                 var data = new byte[len];
                 Array.Copy(buf, pos, data, 0, len);
                 return data;
             }
+
             pos += len;
         }
         return null;

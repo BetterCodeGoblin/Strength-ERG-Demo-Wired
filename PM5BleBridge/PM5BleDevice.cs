@@ -301,11 +301,13 @@ internal class PM5BleDevice
     {
         while (_csafeRx.TryDequeue(out byte[]? r))
         {
+            // CMD_CADENCE (0x94) on these PM5 BLE units is currently returning
+            // ASCII-like device identifier bytes rather than live cadence. Ignore it
+            // until we identify the correct control-path command for row/bike cadence.
             var cad = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_CADENCE);
             if (cad?.Length >= 1)
             {
-                _spm = cad[0];
-                Console.WriteLine($"[{Channel.ChannelName}] CSAFE GETCADENCE -> {_spm:F0}");
+                Console.WriteLine($"[{Channel.ChannelName}] CSAFE GETCADENCE raw ignored: " + BitConverter.ToString(cad));
             }
 
             var pwr = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_POWER);
@@ -313,6 +315,15 @@ internal class PM5BleDevice
             {
                 _power = pwr[0] | (pwr[1] << 8);
                 Console.WriteLine($"[{Channel.ChannelName}] CSAFE GETPOWER -> {_power:F0}W");
+
+                // Derive a coarse live-activity signal from power until we have the correct
+                // cadence command on the endurance control path. This keeps UE truthfully
+                // idle at tiny baseline watts but marks real effort as active.
+                if (_power >= 30f)
+                    _spm = 10f;
+                else if (_power <= 10f)
+                    _spm = 0f;
+
                 if (_power > 1f)
                     _pace = CsafeHelper.ComputeRowingPace(_power);
                 else if (_spm == 0f)

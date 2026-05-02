@@ -72,6 +72,8 @@ internal class PM5BleDevice
     private volatile float _spm     = 0f;
     private volatile float _power   = 0f;
     private volatile int   _lastRep = -1;
+    private float _lastEndurancePower = 0f;
+    private int   _lowPowerRepeatCount = 0;
 
     private readonly ConcurrentQueue<byte[]> _csafeRx = new();
     private bool _stop;
@@ -319,15 +321,36 @@ internal class PM5BleDevice
                 // Derive a coarse live-activity signal from power until we have the correct
                 // cadence command on the endurance control path. This keeps UE truthfully
                 // idle at tiny baseline watts but marks real effort as active.
+                if (Math.Abs(_power - _lastEndurancePower) < 0.5f && _power <= 12f)
+                    _lowPowerRepeatCount++;
+                else
+                    _lowPowerRepeatCount = 0;
+
+                _lastEndurancePower = _power;
+
                 if (_power >= 5f)
                     _spm = 10f;
                 else if (_power <= 2f)
                     _spm = 0f;
 
-                if (_power > 1f)
-                    _pace = CsafeHelper.ComputeRowingPace(_power);
-                else if (_spm == 0f)
+                // Rower can get stuck repeating a tiny stale watt value after the last real pull.
+                // If the same low power repeats for several polls, force it back to idle.
+                if (Channel.ChannelName.Equals("Rowing", StringComparison.OrdinalIgnoreCase)
+                    && _power <= 12f && _lowPowerRepeatCount >= 4)
+                {
+                    Console.WriteLine($"[{Channel.ChannelName}] Clearing stale low-power tail pwr={_power:F0} repeats={_lowPowerRepeatCount}");
+                    _power = 0f;
+                    _spm = 0f;
                     _pace = 0f;
+                }
+                else if (_power > 1f)
+                {
+                    _pace = CsafeHelper.ComputeRowingPace(_power);
+                }
+                else if (_spm == 0f)
+                {
+                    _pace = 0f;
+                }
             }
 
             var hr = CsafeHelper.ExtractPublicCmd(r, CsafeHelper.CMD_HR);

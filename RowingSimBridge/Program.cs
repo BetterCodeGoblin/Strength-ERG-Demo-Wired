@@ -23,10 +23,12 @@ Console.WriteLine();
 var listener = new TcpListener(IPAddress.Loopback, TCP_PORT);
 listener.Start();
 
-double elapsed    = 0.0;
-float  strokeRate = 20f;
-float  powerWatts = 180f;
-float  heartRate  = 140f;
+double elapsed      = 0.0;
+float  strokeRate   = 20f;
+float  powerWatts   = 180f;
+float  heartRate    = 140f;
+int    strokeCount  = 0;
+double nextStrokeAt = 0.0;  // elapsed seconds when next simulated stroke fires
 
 while (true)
 {
@@ -40,7 +42,9 @@ while (true)
         NewLine   = "\n"
     };
 
-    elapsed = 0.0;
+    elapsed      = 0.0;
+    strokeCount  = 0;
+    nextStrokeAt = 0.0;
 
     try
     {
@@ -58,10 +62,31 @@ while (true)
                 ? 500f / (float)Math.Pow(powerWatts / 2.8, 1.0 / 3.0)
                 : 0f;
 
+            // Emit a rep event each time a simulated stroke completes.
+            // Stroke interval = 60 / strokeRate seconds (matches PM5BleDevice.OnStroke).
+            if (elapsed >= nextStrokeAt)
+            {
+                strokeCount++;
+                float strokeInterval = strokeRate > 0f ? 60f / strokeRate : 3f;
+                nextStrokeAt = elapsed + strokeInterval;
+
+                // driveTimeSec ? 40% of stroke cycle; pullDistance ? empirical 140 cm baseline.
+                float driveTime  = strokeInterval * 0.4f;
+                int   pullDist   = (int)(100f + powerWatts * 0.2f);
+
+                string rep = $"{{\"type\":\"rep\",\"repCount\":{strokeCount}," +
+                              $"\"driveTimeSec\":{driveTime:F3},\"pullDistance\":{pullDist}," +
+                              $"\"heartRate\":{(int)heartRate},\"elapsedSec\":{elapsed:F1}," +
+                              $"\"connected\":true}}";
+                await writer.WriteLineAsync(rep);
+                Console.WriteLine($"  [Row] {rep}");
+            }
+
             string line = $"{{\"type\":\"status\",\"connected\":true," +
                            $"\"strokeRate\":{strokeRate:F1},\"powerWatts\":{powerWatts:F1}," +
                            $"\"paceSec500m\":{paceSec:F1},\"heartRate\":{(int)heartRate}," +
-                           $"\"elapsedSec\":{elapsed:F1},\"statusText\":\"Sim Active\"}}";
+                           $"\"elapsedSec\":{elapsed:F1},\"repCount\":{strokeCount}," +
+                           $"\"statusText\":\"Sim Active\"}}";
 
             await writer.WriteLineAsync(line);
             Console.WriteLine($"  [Row] {line}");

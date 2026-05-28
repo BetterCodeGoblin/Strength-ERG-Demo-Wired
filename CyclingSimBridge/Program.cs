@@ -23,10 +23,12 @@ Console.WriteLine();
 var listener = new TcpListener(IPAddress.Loopback, TCP_PORT);
 listener.Start();
 
-double elapsed    = 0.0;
-float  cadenceRpm = 80f;
-float  powerWatts = 200f;
-float  heartRate  = 145f;
+double elapsed      = 0.0;
+float  cadenceRpm   = 80f;
+float  powerWatts   = 200f;
+float  heartRate    = 145f;
+int    pedalCount   = 0;
+double nextPedalAt  = 0.0;  // elapsed seconds when next simulated pedal stroke fires
 
 while (true)
 {
@@ -40,7 +42,9 @@ while (true)
         NewLine   = "\n"
     };
 
-    elapsed = 0.0;
+    elapsed     = 0.0;
+    pedalCount  = 0;
+    nextPedalAt = 0.0;
 
     try
     {
@@ -53,10 +57,31 @@ while (true)
             powerWatts = 200f + 40f * (float)Math.Sin(elapsed * 0.28);
             heartRate  = 145f + 10f * (float)Math.Sin(elapsed * 0.1);
 
+            // Emit a rep event each time a simulated pedal revolution completes.
+            // Revolution interval = 60 / cadenceRpm seconds.
+            if (elapsed >= nextPedalAt)
+            {
+                pedalCount++;
+                float revInterval = cadenceRpm > 0f ? 60f / cadenceRpm : 0.75f;
+                nextPedalAt = elapsed + revInterval;
+
+                // driveTimeSec ? half revolution; pullDistance maps to crank arc (arbitrary units).
+                float driveTime = revInterval * 0.5f;
+                int   pullDist  = (int)(80f + powerWatts * 0.15f);
+
+                string rep = $"{{\"type\":\"rep\",\"repCount\":{pedalCount}," +
+                              $"\"driveTimeSec\":{driveTime:F3},\"pullDistance\":{pullDist}," +
+                              $"\"heartRate\":{(int)heartRate},\"elapsedSec\":{elapsed:F1}," +
+                              $"\"connected\":true}}";
+                await writer.WriteLineAsync(rep);
+                Console.WriteLine($"  [Cyc] {rep}");
+            }
+
             string line = $"{{\"type\":\"status\",\"connected\":true," +
                            $"\"strokeRate\":{cadenceRpm:F1},\"powerWatts\":{powerWatts:F1}," +
                            $"\"paceSec500m\":0,\"heartRate\":{(int)heartRate}," +
-                           $"\"elapsedSec\":{elapsed:F1},\"statusText\":\"Sim Active\"}}";
+                           $"\"elapsedSec\":{elapsed:F1},\"repCount\":{pedalCount}," +
+                           $"\"statusText\":\"Sim Active\"}}";
 
             await writer.WriteLineAsync(line);
             Console.WriteLine($"  [Cyc] {line}");

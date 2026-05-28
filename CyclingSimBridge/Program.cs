@@ -59,11 +59,15 @@ while (true)
 
             // Emit a rep event each time a simulated pedal revolution completes.
             // Revolution interval = 60 / cadenceRpm seconds.
-            if (elapsed >= nextPedalAt)
+            // Use while so that if a tick overshoots multiple revolution boundaries
+            // (e.g. after a stall) each missed stroke fires in order, matching how
+            // CE060035 StrokeData fires one notification per completed pedal stroke
+            // on real BikeErg hardware.
+            while (elapsed >= nextPedalAt)
             {
                 pedalCount++;
                 float revInterval = cadenceRpm > 0f ? 60f / cadenceRpm : 0.75f;
-                nextPedalAt = elapsed + revInterval;
+                nextPedalAt += revInterval;  // advance by interval, not from now, to avoid drift
 
                 // driveTimeSec ? half revolution; pullDistance maps to crank arc (arbitrary units).
                 float driveTime = revInterval * 0.5f;

@@ -64,11 +64,14 @@ while (true)
 
             // Emit a rep event each time a simulated stroke completes.
             // Stroke interval = 60 / strokeRate seconds (matches PM5BleDevice.OnStroke).
-            if (elapsed >= nextStrokeAt)
+            // Use while so that if a tick overshoots multiple stroke boundaries each
+            // missed stroke fires in order, matching CE060035 StrokeData behaviour on
+            // real RowErg hardware.
+            while (elapsed >= nextStrokeAt)
             {
                 strokeCount++;
                 float strokeInterval = strokeRate > 0f ? 60f / strokeRate : 3f;
-                nextStrokeAt = elapsed + strokeInterval;
+                nextStrokeAt += strokeInterval;  // advance by interval, not from now, to avoid drift
 
                 // driveTimeSec ? 40% of stroke cycle; pullDistance ? empirical 140 cm baseline.
                 float driveTime  = strokeInterval * 0.4f;
